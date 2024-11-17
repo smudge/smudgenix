@@ -11,13 +11,13 @@
   outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, ... }: {
     nixosConfigurations = {
       default = {
-        hardwareConfigPath ? "/etc/nixos/hardware-configuration.nix",
-        hostname,
-        nixosHardwareModule
+        hardwareConfig,
+        nixosHardwareModule,
+        hostname
       }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
-          hardwareConfigPath
+          hardwareConfig
           nixosHardwareModule
           ./configuration.nix
           ({ config, ... }: {
