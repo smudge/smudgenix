@@ -17,7 +17,7 @@
       }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
-          (if builtins.pathExists hardwareConfigPath then import hardwareConfigPath else {})
+          hardwareConfigPath
           nixosHardwareModule
           ./configuration.nix
           ({ config, ... }: {
