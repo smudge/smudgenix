@@ -9,17 +9,14 @@
     };
 
   outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, ... }: {
+    hardware = nixos-hardware;
     nixosConfigurations = {
       default = {
-        hardwareConfigPath ? "/etc/nixos/hardware-configuration.nix",
-        nixosHardwareModule ? {},
         hostname,
         extraModules ? []
       }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
-          (import hardwareConfigPath)
-          nixosHardwareModule
           ./configuration.nix
           ({ config, ... }: {
             networking.hostName = hostname;
