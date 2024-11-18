@@ -26,5 +26,8 @@
         ];
       };
     };
+
+    # Expose `lib` so it can be used by the bootstrap Flake
+    lib = nixpkgs.lib;
   };
 }

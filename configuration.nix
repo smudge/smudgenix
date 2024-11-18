@@ -2,17 +2,14 @@
 # your system.  Help is available in the configuration.nix(5) man page
 # and in the NixOS manual (accessible by running ‘nixos-help’).
 
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
-let
-  #unstablepkgs = import <nixos-unstable> {};
-in
 {
   # Because nvidia:
   nixpkgs.config.allowUnfree = true;
 
   # Because intel:
-  hardware.cpu.intel.updateMicrocode = true;
+  hardware.enableRedistributableFirmware = lib.mkDefault true;
 
   # Video driver:
   services.xserver.videoDrivers = ["modesetting"];
@@ -75,7 +72,6 @@ in
 
   # Enable networking
   networking.networkmanager.enable = true;
-  # networking.hostName = "nixos"; # Define your hostname.
   # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
 
   # Configure network proxy if necessary
@@ -139,7 +135,7 @@ in
   # List services that you want to enable:
 
   # Firmware updates:
-  services.fwupd.enable = true;
+  # services.fwupd.enable = true;
 
   # HiDPI Screen
   console.font = "${pkgs.terminus_font}/share/consolefonts/ter-u28n.psf.gz";
