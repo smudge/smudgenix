@@ -13,7 +13,8 @@
       default = {
         hardwareConfigPath ? "/etc/nixos/hardware-configuration.nix",
         nixosHardwareModule ? {},
-        hostname
+        hostname,
+        extraModules ? []
       }: nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         modules = [
@@ -23,11 +24,8 @@
           ({ config, ... }: {
             networking.hostName = hostname;
           })
-        ];
+        ] ++ extraModules;
       };
     };
-
-    # Expose `lib` so it can be used by the bootstrap Flake
-    lib = nixpkgs.lib;
   };
 }
