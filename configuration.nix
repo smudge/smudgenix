@@ -11,25 +11,6 @@
   # Because intel:
   hardware.enableRedistributableFirmware = lib.mkDefault true;
 
-  # Video driver:
-  services.xserver.videoDrivers = ["modesetting"];
-
-  services.tlp = {
-    settings = {
-      #TLP_DEFAULT_MODE = "BAT";
-      #TLP_PERSISTENT_DEFAULT = 1;
-      CPU_BOOST_ON_AC = 0;
-      CPU_BOOST_ON_BAT = 0;
-      CPU_HWP_DYN_BOOST_ON_AC=0;
-      CPU_HWP_DYN_BOOST_ON_BAT=0;
-      CPU_ENERGY_PERF_POLICY_ON_AC="default";
-      CPU_ENERGY_PERF_POLICY_ON_BAT="power";
-      CPU_SCALING_GOVERNOR_ON_BATTERY = "powersave";
-      RUNTIME_PM_ON_AC = "auto";
-      RUNTIME_PM_ON_BAT = "auto";
-    };
-  };
-
   # Just in case:
   hardware.opengl = {
     enable = true;
@@ -45,31 +26,6 @@
   # Support NTFS:
   boot.supportedFilesystems = [ "ntfs" ];
 
-  boot.loader = {
-    systemd-boot.enable = false;
-    efi.canTouchEfiVariables = true;
-    grub = {
-      enable = true;
-      devices = ["nodev"];
-      device = "nodev";
-      efiSupport = true;
-      useOSProber = false;
-      fontSize = 60;
-      extraEntries = ''
-        menuentry "Reboot" {
-          reboot
-        }
-        menuentry "Poweroff" {
-          halt
-        }
-      '';
-    };
-  };
-
-  # Use boot spinner
-  boot.kernelParams = ["quiet"];
-  boot.plymouth.enable = true;
-
   # Enable networking
   networking.networkmanager.enable = true;
   # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
@@ -80,7 +36,6 @@
 
   # Select internationalisation properties.
   i18n.defaultLocale = "en_US.UTF-8";
-
   i18n.extraLocaleSettings = {
     LC_ADDRESS = "en_US.UTF-8";
     LC_IDENTIFICATION = "en_US.UTF-8";
@@ -131,31 +86,6 @@
       config.credential.helper = "libsecret";
     };
   };
-
-  # List services that you want to enable:
-
-  # Firmware updates:
-  # services.fwupd.enable = true;
-
-  # HiDPI Screen
-  console.font = "${pkgs.terminus_font}/share/consolefonts/ter-u28n.psf.gz";
-  # services.xserver.dpi = 180;
-  environment.variables = {
-    GDK_SCALE = "2";
-    GDK_DPI_SCALE = "1";
-    QT_SCALE_FACTOR = "0.5";
-    PLASMA_USE_QT_SCALING = "1";
-    _JAVA_OPTIONS = "-Dsun.java2d.uiScale=2";
-  };
-
-  # Enable the OpenSSH daemon.
-  # services.openssh.enable = true;
-
-  # Open ports in the firewall.
-  # networking.firewall.allowedTCPPorts = [ ... ];
-  # networking.firewall.allowedUDPPorts = [ ... ];
-  # Or disable the firewall altogether.
-  # networking.firewall.enable = false;
 
   # Monitor & control temps:
   services.thermald.enable = true;
