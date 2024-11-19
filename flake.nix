@@ -20,7 +20,7 @@
         system = "x86_64-linux";
         modules = [
           ./configuration.nix
-          ({ config, ... }: {
+          ({ config, pkgs, ... }: {
             networking.hostName = hostname;
 
             users.users.${username} = {
