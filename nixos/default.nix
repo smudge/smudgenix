@@ -7,9 +7,10 @@ in
 {
   default = {
     vars,
+    system ? "x86_64-linux",
     extraModules ? []
   }: nixosSystem {
-    system = "x86_64-linux";
+    inherit system;
     modules = [
       (import ./boot.nix { inherit vars; })
       (import ./display.nix { inherit vars; })
