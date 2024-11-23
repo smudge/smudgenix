@@ -6,20 +6,18 @@ let
 in
 {
   default = {
-    hostname,
-    username,
-    userDescription,
+    vars,
     extraModules ? []
   }: nixosSystem {
     system = "x86_64-linux";
     modules = [
       ./configuration.nix
       ({ config, pkgs, ... }: {
-        networking.hostName = hostname;
+        networking.hostName = vars.hostname;
 
-        users.users.${username} = {
+        users.users.${vars.username} = {
           isNormalUser = true;
-          description = userDescription;
+          description = vars.userDescription;
           extraGroups = [ "networkmanager" "wheel" "lp" "input" ];
           packages = with pkgs; [
             home-manager
