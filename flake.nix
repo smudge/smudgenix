@@ -1,3 +1,11 @@
+#  flake.nix *
+#   ├─ ./nixos
+#   │   └─ default.nix
+#   ├─ ./macos
+#   │   └─ default.nix
+#   └─ ./nix
+#       └─ default.nix
+
 {
   description = "An all-in-one tool for managing Nix, NixOS, and macOS systems";
 
@@ -11,8 +19,17 @@
 
   outputs = inputs @ { self, nixpkgs, nixpkgs-unstable, nixos-hardware, nix-darwin, home-manager, ... }: {
     hardware = nixos-hardware;
+
     nixosConfigurations = (import ./nixos {
       inherit inputs nixpkgs;
+    });
+
+    macosConfigurations = (import ./macos {
+      inherit inputs nixpkgs nix-darwin;
+    });
+
+    nixConfigurations = (import ./nix {
+      inherit inputs nixpkgs home-manager;
     });
   };
 }
