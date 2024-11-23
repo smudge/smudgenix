@@ -1,39 +1,18 @@
 {
-  description = "My NixOS configuration";
+  description = "An all-in-one tool for managing Nix, NixOS, and macOS systems";
 
-  inputs =
-    {
-      nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
-      nixpkgs-unstable.url = "github:nixos/nixpkgs/nixos-unstable";
-      nixos-hardware.url = "github:nixos/nixos-hardware/master";
-    };
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs-unstable.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixos-hardware.url = "github:nixos/nixos-hardware/master";
+    nix-darwin = { url = "github:lnl7/nix-darwin/master"; inputs.nixpkgs.follows = "nixpkgs"; };
+    home-manager = { url = "github:nix-community/home-manager"; inputs.nixpkgs.follows = "nixpkgs"; };
+  };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, ... }: {
+  outputs = inputs @ { self, nixpkgs, nixpkgs-unstable, nixos-hardware, nix-darwin, home-manager, ... }: {
     hardware = nixos-hardware;
-    nixosConfigurations = {
-      default = {
-        hostname,
-        username,
-        userDescription ? username,
-        extraModules ? []
-      }: nixpkgs.lib.nixosSystem {
-        system = "x86_64-linux";
-        modules = [
-          ./configuration.nix
-          ({ config, pkgs, ... }: {
-            networking.hostName = hostname;
-
-            users.users.${username} = {
-              isNormalUser = true;
-              description = userDescription;
-              extraGroups = [ "networkmanager" "wheel" "lp" "input" ];
-              packages = with pkgs; [
-                home-manager
-              ];
-            };
-          })
-        ] ++ extraModules;
-      };
-    };
+    nixosConfigurations = (import ./nixos {
+      inherit inputs nixpkgs;
+    });
   };
 }
