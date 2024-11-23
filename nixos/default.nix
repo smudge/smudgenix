@@ -14,10 +14,11 @@ in
       ./configuration.nix
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
+        time.timeZone = vars.timezone;
 
-        users.users.${vars.username} = {
+        users.users.${vars.user.name} = {
           isNormalUser = true;
-          description = vars.userDescription;
+          description = vars.user.description;
           extraGroups = [ "networkmanager" "wheel" "lp" "input" ];
           packages = with pkgs; [
             home-manager

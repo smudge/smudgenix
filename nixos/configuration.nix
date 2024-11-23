@@ -48,11 +48,8 @@
     LC_TIME = "en_US.UTF-8";
   };
 
-  # Set your time zone.
-  time = {
-    timeZone = "UTC";
-    hardwareClockInLocalTime = true; # Windows dual-boot compat
-  };
+  # Windows dual-boot compat
+  time.hardwareClockInLocalTime = true;
 
   # Disable the NixOS documentation app.
   documentation.nixos.enable = false;
