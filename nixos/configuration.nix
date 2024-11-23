@@ -11,15 +11,6 @@
   # Because intel:
   hardware.enableRedistributableFirmware = lib.mkDefault true;
 
-  # Just in case:
-  hardware.opengl = {
-    enable = true;
-    #package = unstablepkgs.mesa.drivers;
-    driSupport = true;
-    driSupport32Bit = true;
-    #package32 = unstablepkgs.pkgsi686Linux.mesa.drivers;
-  };
-
   # Use latest Linux kernel:
   boot.kernelPackages = pkgs.linuxPackages_latest;
 

@@ -12,6 +12,7 @@ in
     system = "x86_64-linux";
     modules = [
       (import ./boot.nix { inherit vars; })
+      (import ./display.nix { inherit vars; })
       ./configuration.nix
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
