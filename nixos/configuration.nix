@@ -23,9 +23,6 @@
   # Use latest Linux kernel:
   boot.kernelPackages = pkgs.linuxPackages_latest;
 
-  # Support NTFS:
-  boot.supportedFilesystems = [ "ntfs" ];
-
   # Enable networking
   networking.networkmanager.enable = true;
   # networking.wireless.enable = true;  # Enables wireless support via wpa_supplicant.
@@ -47,9 +44,6 @@
     LC_TELEPHONE = "en_US.UTF-8";
     LC_TIME = "en_US.UTF-8";
   };
-
-  # Windows dual-boot compat
-  time.hardwareClockInLocalTime = true;
 
   # Disable the NixOS documentation app.
   documentation.nixos.enable = false;

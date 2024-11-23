@@ -11,6 +11,7 @@ in
   }: nixosSystem {
     system = "x86_64-linux";
     modules = [
+      (import ./boot.nix { inherit vars; })
       ./configuration.nix
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
