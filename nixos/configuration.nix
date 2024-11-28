@@ -80,7 +80,6 @@
   hardware.bluetooth.powerOnBoot = true;
 
   # Enable sound.
-  sound.enable = false; # only for ALSA, setting pipewire below
   hardware.pulseaudio.enable = false;
   security.rtkit.enable = true;
   services.pipewire = {
@@ -160,14 +159,14 @@
     libinput-gestures
     libsecret
     gnome-themes-extra
-    gnome.adwaita-icon-theme
+    adwaita-icon-theme
 
     wl-clipboard
     xclip
 
     # Utility apps
-    cinnamon.nemo
-    gnome.eog
+    nemo
+    eog
     firefox
     alacritty
 
