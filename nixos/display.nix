@@ -4,6 +4,7 @@
     hiDPI = false;
   };
 
+  # High DPI adjustments for primary screen/monitor:
   hiDPIConfig = if vars.hiDPI then {
     boot.loader.grub.fontSize = 60;
 
@@ -19,8 +20,7 @@
 in
 {
   config = hiDPIConfig // {
-    hardware.graphics = {
-      enable = true;
-    };
+    hardware.graphics.enable = true;
+    services.xserver.displayManager.gdm.enable = true;
   };
 }
