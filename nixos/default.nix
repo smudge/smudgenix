@@ -27,7 +27,7 @@ in
         users.users.${vars.user.name} = {
           isNormalUser = true;
           description = vars.user.description;
-          extraGroups = [ "networkmanager" "wheel" "lp" "input" ];
+          extraGroups = [ "networkmanager" "wheel" "lp" "input" "video"];
           packages = with pkgs; [
             home-manager
           ];

@@ -50,7 +50,7 @@ in {
     font-awesome
     pavucontrol
     pulseaudio
-    brillo
+    brightnessctl
     wlogout
     libinput-gestures
     gnome-themes-extra
