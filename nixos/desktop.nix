@@ -39,9 +39,9 @@ in {
   services.xserver.excludePackages = [ pkgs.xterm ];
 
   # Enable the GNOME Desktop Environment (w/o core utils)
-  # services.xserver.desktopManager.gnome.enable = false;
-  # services.gnome.core-utilities.enable = false;
-  # environment.gnome.excludePackages = [ pkgs.gnome-tour ];
+  services.desktopManager.gnome.enable = true;
+  services.gnome.core-apps.enable = false;
+  environment.gnome.excludePackages = [ pkgs.gnome-tour ];
 
   # Packages for Hyprland and Waybar:
   environment.systemPackages = with pkgs; [
