@@ -69,7 +69,7 @@ in {
     # gnomeExtensions.x11-gestures # basic gestures
     # gnomeExtensions.gesture-improvements # better gestures
     # gnomeExtensions.desktop-icons-ng-ding # desktop icons
-    # gnomeExtensions.appindicator # tray icons
+    gnomeExtensions.appindicator # tray icons
   ];
 
 }
