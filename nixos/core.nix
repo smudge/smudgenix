@@ -16,6 +16,15 @@ in {
   # Because intel:
   hardware.enableRedistributableFirmware = lib.mkDefault true;
 
+  # Support flakes:
+  nix = {
+    package = pkgs.nixFlakes;
+    registry.nixpkgs.flake = config.nixpkgs;
+    extraOptions = ''
+      experimental-features = nix-command flakes
+    '';
+  };
+
   # Disable the NixOS documentation app.
   documentation.nixos.enable = false;
 
