@@ -39,7 +39,7 @@ in {
   services.xserver.excludePackages = [ pkgs.xterm ];
 
   # Enable the GNOME Desktop Environment (w/o core utils)
-  services.desktopManager.gnome.enable = true;
+  services.xserver.desktopManager.gnome.enable = true;
   services.gnome.core-apps.enable = false;
   environment.gnome.excludePackages = [ pkgs.gnome-tour ];
 

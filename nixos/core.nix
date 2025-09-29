@@ -18,8 +18,6 @@ in {
 
   # Support flakes:
   nix = {
-    package = pkgs.nixFlakes;
-    registry.nixpkgs.flake = config.nixpkgs;
     extraOptions = ''
       experimental-features = nix-command flakes
     '';
