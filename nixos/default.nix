@@ -8,7 +8,7 @@ in
   default = {
     vars,
     system ? "x86_64-linux",
-    extraModules ? []
+    extraModules ? [],
   }: nixosSystem {
     inherit system;
     modules = [
@@ -30,6 +30,7 @@ in
           extraGroups = [ "networkmanager" "wheel" "lp" "input" "video"];
           packages = with pkgs; [
             home-manager
+            inputs.codex-cli-nix.packages.${system}.default
           ];
         };
 
