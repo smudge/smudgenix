@@ -14,6 +14,7 @@ in
     modules = [
       (import ./boot.nix { inherit vars; })
       (import ./core.nix { inherit vars; })
+      (import ./auto_update.nix { inherit vars; })
       (import ./connectivity.nix { inherit vars; })
       (import ./audio.nix { inherit vars; })
       (import ./display.nix { inherit vars; })
