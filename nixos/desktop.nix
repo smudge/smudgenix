@@ -55,6 +55,7 @@ in {
     libinput-gestures
     gnome-themes-extra
     adwaita-icon-theme
+    papers
 
     wl-clipboard
     xclip
