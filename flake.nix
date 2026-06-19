@@ -10,7 +10,7 @@
   description = "An all-in-one tool for managing Nix, NixOS, and macOS systems";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixos-hardware.url = "github:nixos/nixos-hardware/master";
     nix-darwin = { url = "github:nix-darwin/nix-darwin/nix-darwin-25.05"; inputs.nixpkgs.follows = "nixpkgs"; };
