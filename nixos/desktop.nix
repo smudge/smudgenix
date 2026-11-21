@@ -13,8 +13,6 @@
 
   # Enable X11 for compatibility reasons:
   services.xserver.enable = true;
-  services.xserver.xkb.layout = "us";
-  services.xserver.xkb.variant = "";
   services.xserver.excludePackages = [ pkgs.xterm ];
 
   # Enable the GNOME Desktop Environment (w/o core utils)
@@ -26,9 +24,6 @@
     gnome-themes-extra
     adwaita-icon-theme
     papers
-
-    wl-clipboard
-    xclip
 
     gnomeExtensions.appindicator # tray icons
   ];

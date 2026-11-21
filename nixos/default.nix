@@ -13,7 +13,6 @@ let
       ./connectivity.nix
       ./audio.nix
       ./display.nix
-      ./i18n.nix
       ./inputs.nix
       ./desktop.nix
       ./userland.nix

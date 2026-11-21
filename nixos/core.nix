@@ -15,10 +15,8 @@ in
     # Use latest Linux kernel:
     boot.kernelPackages = pkgs.linuxPackages_latest;
 
-    # Because nvidia:
+    # Allow unfree packages and firmware (e.g. GPU, wifi & bluetooth blobs):
     nixpkgs.config.allowUnfree = true;
-
-    # Because intel:
     hardware.enableRedistributableFirmware = lib.mkDefault true;
 
     # Support flakes, and go flake-only (no channels; <nixpkgs> resolves to
@@ -32,9 +30,6 @@ in
 
     # Disable the NixOS documentation app.
     documentation.nixos.enable = false;
-
-    # Monitor & control temps:
-    services.thermald.enable = true;
 
     # Use libsecret and launch gnome-keyring at startup.
     programs.dconf.enable = true;

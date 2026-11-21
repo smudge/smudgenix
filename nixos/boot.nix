@@ -14,7 +14,6 @@ in
       efi.canTouchEfiVariables = true;
       grub = {
         enable = true;
-        devices = [ "nodev" ];
         device = "nodev";
         efiSupport = true;
         useOSProber = cfg.windowsCompat;
