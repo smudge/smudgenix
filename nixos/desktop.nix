@@ -3,30 +3,11 @@
   v = {
   } // vars;
 in {
-  # Use hyprland:
-  programs.hyprland.enable = true;
-  environment.sessionVariables = {
-    # Fix invisible cursors on Wayland
-    WLR_NO_HARDWARE_CURSORS = "1";
-    # Hint to electron apps that they should use Wayland
-    NIXOS_OZONE_WL = "1";
-  };
-  xdg.portal = {
-    xdgOpenUsePortal = true;
-    enable = true;
-    # wlr.enable = true;
-    # lxqt.enable = true;
-    extraPortals = [
-        pkgs.xdg-desktop-portal-gtk
-    #   pkgs.xdg-desktop-portal-gnome
-    #   pkgs.xdg-desktop-portal-kde
-    #   pkgs.xdg-desktop-portal-wlr
-    ];
-  };
+  # Hint to electron apps that they should use Wayland
+  environment.sessionVariables.NIXOS_OZONE_WL = "1";
 
-  # For waybar:
+  # Symbol glyphs (powerline/nerd-font) for terminal UIs:
   fonts.packages = with pkgs; [
-    font-awesome
     powerline-fonts
     powerline-symbols
     nerd-fonts.symbols-only
@@ -43,16 +24,7 @@ in {
   services.gnome.core-apps.enable = false;
   environment.gnome.excludePackages = [ pkgs.gnome-tour ];
 
-  # Packages for Hyprland and Waybar:
   environment.systemPackages = with pkgs; [
-    networkmanagerapplet
-    kitty
-    font-awesome
-    pavucontrol
-    pulseaudio
-    brightnessctl
-    wlogout
-    libinput-gestures
     gnome-themes-extra
     adwaita-icon-theme
     papers
@@ -60,17 +32,6 @@ in {
     wl-clipboard
     xclip
 
-    # Display workspaces correctly
-    (waybar.overrideAttrs (oldAttrs: {
-        mesonFlags = oldAttrs.mesonFlags ++ [ "-Dexperimental=true" ];
-      })
-      )
-
-    # Missing GNOME features:
-    # gnomeExtensions.x11-gestures # basic gestures
-    # gnomeExtensions.gesture-improvements # better gestures
-    # gnomeExtensions.desktop-icons-ng-ding # desktop icons
     gnomeExtensions.appindicator # tray icons
   ];
-
 }

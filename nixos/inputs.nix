@@ -5,10 +5,6 @@
 in {
   # Support trackpads.
   services.libinput.enable = true;
-  services.touchegg.enable = true;
-  environment.systemPackages = [
-    pkgs.libinput-gestures
-  ];
 
   # Set a faster key repeat.
   services.xserver = {
