@@ -1,10 +1,8 @@
 { lib, ... }:
 
 {
-  home.sessionVariables = {
-    EDITOR = lib.mkDefault "nvim";
-    BROWSER = lib.mkDefault "firefox";
-  };
+  # (EDITOR and the vi/vim aliases come from nixvim.)
+  home.sessionVariables.BROWSER = lib.mkDefault "firefox";
 
   programs.bash = {
     enable = true;
@@ -13,8 +11,6 @@
       ls = "eza";
       cat = "bat --paging=never --style=plain";
       du = "ncdu --color dark -rr -x --exclude .git --exclude node_modules";
-      vim = "nvim";
-      vi = "nvim";
     };
     initExtra = ''
       if type tmux &>/dev/null; then
@@ -22,9 +18,6 @@
           [ -z "$TMUX"  ] && { exec tmux new-session && exit; }
         fi
       fi
-    '';
-    bashrcExtra = ''
-     eval "$(direnv hook bash)"
     '';
   };
 }

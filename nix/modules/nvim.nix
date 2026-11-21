@@ -4,6 +4,8 @@
   programs.nixvim = {
     enable = true;
     defaultEditor = true;
+    viAlias = true;
+    vimAlias = true;
 
     # Core
     globals = {
@@ -23,7 +25,6 @@
     };
     opts = {
       mouse = "a"; # i dare you to call me lazy
-      # mousemodel = "extend";
       wildmenu = true;
       wildmode = "list:longest";
 
@@ -34,7 +35,6 @@
       autoread = true;
       autowrite = true;
       backspace = "indent,eol,start";
-      encoding = "utf8";
       fileencoding = "utf-8";
       fileformats = "unix,dos,mac";
       ignorecase = true;
@@ -43,13 +43,6 @@
       infercase = true;
       laststatus = 2;
       linebreak = true;
-      # swapfile = false;
-      # hidden = true;
-      # undofile = true;
-      # scrolloff = 8;
-      # cursorline = false;
-      # cursorcolumn = false;
-      # colorcolumn = "100";
 
       # show hidden characters
       listchars = "tab:▸\ ,eol:¬,space:.,trail:\!";
@@ -58,11 +51,9 @@
       # Gutter
       signcolumn = "yes"; # Keep expanded
       number = true;
-      # relativenumber = true;
 
       # Faster drawing
       lazyredraw = true;
-      ttyfast = true;
 
       # Default filetype options
       tabstop = 2;
@@ -234,46 +225,19 @@
         settings.highlight.timer = 300; # default 500
       };
       goyo.enable = true;
-      # limelight.enable = true;
       tmux-navigator.enable = true;
 
       # Files/Git/Search
       fugitive.enable = true;
       neo-tree.enable = true;
-      # fzf-lua.enable = true;
-
-      # Linting/Normalizing
-      # ale.enable = true;
-
-      # Integrations
-      # webapi.enable = true;
-      # gist.enable = true;
-      # copilot-vim.enable = true;
 
       # Languages/Syntax
       nix.enable = true;
-      # ruby.enable = true;
-      # rails.enable = true;
       endwise.enable = true;
       vim-surround.enable = true;
-      # rake.enable = true;
-      # rust.enable = true;
-      # javascript.enable = true;
-      # typescript.enable = true;
-      # jsx-pretty.enable = true;
-      # vim-misc.enable = true;
-      # vim-lua-ftplugin.enable = true;
 
       # Markdown
-      # markdown.enable = true;
-      # vim-markdown-toc.enable = true;
       markdown-preview.enable = true;
-
-      # HTML
-      # bracey.enable = true;
-
-      # VS Code Language Servers
-      # coc-nvim.enable = true;
     };
 
     extraPlugins = with pkgs.vimPlugins; [
