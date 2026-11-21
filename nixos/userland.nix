@@ -1,11 +1,7 @@
-{ vars ? {} }:
-{ config, pkgs, lib, ... }: let
-  v = {
-    user = {
-      # Flake template used to generate ~/.config/home-manager on first login.
-      homeTemplate = "github:smudge/smudgenix#home";
-    } // (vars.user or {});
-  } // (builtins.removeAttrs vars [ "user" ]);
+{ config, pkgs, lib, ... }:
+
+let
+  cfg = config.smudgenix.user;
 
   system = pkgs.stdenv.hostPlatform.system;
 
@@ -20,7 +16,7 @@
   common = {
     path = [ config.nix.package pkgs.git pkgs.gnused pkgs.coreutils ];
     unitConfig = {
-      ConditionUser = v.user.name;
+      ConditionUser = cfg.name;
     };
     serviceConfig = {
       Type = "oneshot";
@@ -28,48 +24,57 @@
       RestartSec = "5min";
     };
   };
-in {
-  # On first login, generate an uncommitted per-host home flake from the
-  # smudgenix home template (never cloning or overwriting anything), then apply it.
-  systemd.user.services.home-manager-bootstrap = lib.recursiveUpdate common {
-    description = "Bootstrap per-host home-manager flake";
-    wantedBy = [ "default.target" ];
-    unitConfig.ConditionPathExists = "!%h/.config/home-manager/flake.nix";
-    script = ''
-      set -euo pipefail
-      mkdir -p "$HOME/.config/home-manager"
-      cd "$HOME/.config/home-manager"
-      nix flake init -t '${v.user.homeTemplate}'
-      # Fill in the placeholders, and follow the system's pinned nixpkgs (so
-      # home and system share one nixpkgs, in lockstep).
-      sed -i \
-        -e "s|@username@|$USER|g" \
-        -e 's|@system@|${system}|g' \
-        -e 's|@stateVersion@|${config.system.nixos.release}|g' \
-        -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
-        -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
-        flake.nix
-      ${activate}
-    '';
+in
+{
+  options.smudgenix.user.homeTemplate = lib.mkOption {
+    type = lib.types.str;
+    default = "github:smudge/smudgenix#home";
+    description = "Flake template used to generate ~/.config/home-manager on first login.";
   };
 
-  # Keep userland current with whatever has been pushed upstream.
-  systemd.user.services.home-manager-auto-update = lib.recursiveUpdate common {
-    description = "Update & apply per-host home-manager flake";
-    unitConfig.ConditionPathExists = "%h/.config/home-manager/flake.nix";
-    script = ''
-      set -euo pipefail
-      cd "$HOME/.config/home-manager"
-      nix flake update
-      ${activate}
-    '';
-  };
-  systemd.user.timers.home-manager-auto-update = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "daily";
-      Persistent = true;
-      RandomizedDelaySec = "1h";
+  config = {
+    # On first login, generate an uncommitted per-host home flake from the
+    # smudgenix home template (never cloning or overwriting anything), then apply it.
+    systemd.user.services.home-manager-bootstrap = lib.recursiveUpdate common {
+      description = "Bootstrap per-host home-manager flake";
+      wantedBy = [ "default.target" ];
+      unitConfig.ConditionPathExists = "!%h/.config/home-manager/flake.nix";
+      script = ''
+        set -euo pipefail
+        mkdir -p "$HOME/.config/home-manager"
+        cd "$HOME/.config/home-manager"
+        nix flake init -t '${cfg.homeTemplate}'
+        # Fill in the placeholders, and follow the system's pinned nixpkgs (so
+        # home and system share one nixpkgs, in lockstep).
+        sed -i \
+          -e "s|@username@|$USER|g" \
+          -e 's|@system@|${system}|g' \
+          -e 's|@stateVersion@|${config.system.nixos.release}|g' \
+          -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
+          -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
+          flake.nix
+        ${activate}
+      '';
+    };
+
+    # Keep userland current with whatever has been pushed upstream.
+    systemd.user.services.home-manager-auto-update = lib.recursiveUpdate common {
+      description = "Update & apply per-host home-manager flake";
+      unitConfig.ConditionPathExists = "%h/.config/home-manager/flake.nix";
+      script = ''
+        set -euo pipefail
+        cd "$HOME/.config/home-manager"
+        nix flake update
+        ${activate}
+      '';
+    };
+    systemd.user.timers.home-manager-auto-update = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "daily";
+        Persistent = true;
+        RandomizedDelaySec = "1h";
+      };
     };
   };
 }

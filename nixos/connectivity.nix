@@ -1,8 +1,6 @@
-{ vars ? {} }:
-{ config, ... }: let
-  v = {
-  } // vars;
-in {
+{ config, ... }:
+
+{
   # Enable networking.
   networking.networkmanager.enable = true;
   # networking.wireless.enable = true;

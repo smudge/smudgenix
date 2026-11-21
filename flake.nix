@@ -24,13 +24,15 @@
   };
 
   outputs = inputs @ { self, nixpkgs, nixos-hardware, nix-darwin, ... }: let
+    nixos = import ./nixos { inherit inputs nixpkgs; };
     home = import ./nix { inherit inputs nixpkgs; };
   in {
     hardware = nixos-hardware;
 
-    nixosConfigurations = (import ./nixos {
-      inherit inputs nixpkgs;
-    });
+    # NixOS: build a host (see ./template/nixos), or import the module into
+    # your own nixosSystem. Configure via `smudgenix.*` options.
+    lib.mkSystem = nixos.mkSystem;
+    nixosModules.default = nixos.module;
 
     macosConfigurations = (import ./macos {
       inherit inputs nixpkgs nix-darwin;

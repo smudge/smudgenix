@@ -15,38 +15,36 @@
 
   inputs.nixos.url = "github:smudge/smudgenix";
 
-  outputs = { self, nixos }: {
-    nixosConfigurations = let
-      vars = {
-        hostname = "<YOUR HOSTNAME HERE>";
-        timezone = "UTC";
-        # NixOS release of this host's first install. Never change it after
-        # installing (`nixos-version` shows the current release):
-        stateVersion = "26.11";
-        hiDPI = false;
-        gaming = false;
-        # Daily auto-update time, in `timezone` (default "04:00"), or any
-        # systemd calendar spec via `autoUpdateDates`:
-        # autoUpdateTime = "04:00";
-        user = {
-          name = "<YOUR USERNAME HERE>";
-          description = "<YOUR HUMAN NAME HERE>";
-          # Flake template used to bootstrap ~/.config/home-manager:
-          # homeTemplate = "github:smudge/smudgenix#home";
-        };
-      };
-    in {
-      ${vars.hostname} = nixos.outputs.nixosConfigurations.default {
-        inherit vars;
-        extraModules = [
-          ./hardware-configuration.nix
-          # nixos.hardware.nixosModules.<YOUR NIXOS HARDWARE TYPE>
-          ({ config, pkgs, ... }: {
-            # Host-specific overrides & additions go here.
-          })
-        ];
-      };
-      default = self.nixosConfigurations.${vars.hostname};
+  outputs = { self, nixos }: let
+    hostname = "<YOUR HOSTNAME HERE>";
+  in {
+    nixosConfigurations.${hostname} = nixos.lib.mkSystem {
+      modules = [
+        ./hardware-configuration.nix
+        # nixos.hardware.nixosModules.<YOUR NIXOS HARDWARE TYPE>
+        ({ config, pkgs, ... }: {
+          networking.hostName = hostname;
+          time.timeZone = "UTC";
+          # NixOS release of this host's first install. Never change it after
+          # installing (`nixos-version` shows the current release):
+          system.stateVersion = "26.11";
+
+          smudgenix = {
+            user = {
+              name = "<YOUR USERNAME HERE>";
+              description = "<YOUR HUMAN NAME HERE>";
+            };
+            hiDPI = false;
+            gaming = false;
+            # Daily auto-update time, in `time.timeZone` (or any systemd
+            # calendar spec via `autoUpdate.dates`):
+            # autoUpdate.time = "04:00";
+          };
+
+          # Host-specific overrides & additions go here.
+        })
+      ];
     };
+    nixosConfigurations.default = self.nixosConfigurations.${hostname};
   };
 }

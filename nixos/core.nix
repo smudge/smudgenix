@@ -1,63 +1,69 @@
-{ vars ? {} }:
-{ config, pkgs, lib, ... }: let
-  v = {
-    browser = "firefox";
-    terminal = "alacritty";
-    finder = "nemo";
-    preview = "eog";
-  } // vars;
-in {
-  # Use latest Linux kernel:
-  boot.kernelPackages = pkgs.linuxPackages_latest;
+{ config, pkgs, lib, ... }:
 
-  # Because nvidia:
-  nixpkgs.config.allowUnfree = true;
-
-  # Because intel:
-  hardware.enableRedistributableFirmware = lib.mkDefault true;
-
-  # Support flakes, and go flake-only (no channels; <nixpkgs> resolves to
-  # the system's flake nixpkgs):
-  nix = {
-    extraOptions = ''
-      experimental-features = nix-command flakes
-    '';
-    channel.enable = false;
+let
+  cfg = config.smudgenix.apps;
+in
+{
+  options.smudgenix.apps = {
+    browser = lib.mkPackageOption pkgs "firefox" { };
+    terminal = lib.mkPackageOption pkgs "alacritty" { };
+    fileManager = lib.mkPackageOption pkgs "nemo" { };
+    imageViewer = lib.mkPackageOption pkgs "eog" { };
   };
 
-  # Disable the NixOS documentation app.
-  documentation.nixos.enable = false;
+  config = {
+    # Use latest Linux kernel:
+    boot.kernelPackages = pkgs.linuxPackages_latest;
 
-  # Monitor & control temps:
-  services.thermald.enable = true;
+    # Because nvidia:
+    nixpkgs.config.allowUnfree = true;
 
-  # Use libsecret and launch gnome-keyring at startup.
-  programs.dconf.enable = true;
-  programs.seahorse.enable = true;
-  services.gnome.gnome-keyring.enable = true;
-  security.pam.services.gdm.enableGnomeKeyring = true;
+    # Because intel:
+    hardware.enableRedistributableFirmware = lib.mkDefault true;
 
-  # Install git and use libsecret.
-  programs.git = {
-    enable = true;
-    package = pkgs.gitFull;
-    config.credential.helper = "libsecret";
+    # Support flakes, and go flake-only (no channels; <nixpkgs> resolves to
+    # the system's flake nixpkgs):
+    nix = {
+      extraOptions = ''
+        experimental-features = nix-command flakes
+      '';
+      channel.enable = false;
+    };
+
+    # Disable the NixOS documentation app.
+    documentation.nixos.enable = false;
+
+    # Monitor & control temps:
+    services.thermald.enable = true;
+
+    # Use libsecret and launch gnome-keyring at startup.
+    programs.dconf.enable = true;
+    programs.seahorse.enable = true;
+    services.gnome.gnome-keyring.enable = true;
+    security.pam.services.gdm.enableGnomeKeyring = true;
+
+    # Install git and use libsecret.
+    programs.git = {
+      enable = true;
+      package = pkgs.gitFull;
+      config.credential.helper = "libsecret";
+    };
+
+    # Install neovim by default, and alias vi/vim.
+    programs.neovim = {
+      enable = true;
+      defaultEditor = true;
+      viAlias = true;
+      vimAlias = true;
+    };
+
+    # Default desktop apps:
+    environment.systemPackages = [
+      pkgs.libsecret
+      cfg.browser
+      cfg.terminal
+      cfg.fileManager
+      cfg.imageViewer
+    ];
   };
-
-  # Install neovim by default, and alias vi/vim.
-  programs.neovim = {
-    enable = true;
-    defaultEditor = true;
-    viAlias = true;
-    vimAlias = true;
-  };
-
-  # Install all requisite packages
-  environment.systemPackages = [
-    pkgs.libsecret
-    pkgs.${v.browser}
-    pkgs.${v.terminal}
-    pkgs.${v.finder}
-    pkgs.${v.preview}
-  ];
 }

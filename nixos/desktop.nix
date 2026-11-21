@@ -1,8 +1,6 @@
-{ vars ? {} }:
-{ config, pkgs, ... }: let
-  v = {
-  } // vars;
-in {
+{ config, pkgs, ... }:
+
+{
   # Hint to electron apps that they should use Wayland
   environment.sessionVariables.NIXOS_OZONE_WL = "1";
 

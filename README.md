@@ -12,7 +12,8 @@ github:smudge/smudgenix ─┬─► /etc/nixos/flake.nix              (per-host
 ## NixOS
 
 Generate the per-host flake next to your `hardware-configuration.nix`, then
-fill in the vars (hostname, stateVersion, user, hardware module, overrides):
+fill it in (hostname, `system.stateVersion`, `smudgenix.*` options, hardware
+module, overrides):
 
 ```bash
 cd /etc/nixos
@@ -22,7 +23,7 @@ sudo nixos-rebuild switch
 ```
 
 On first login, a user service generates `~/.config/home-manager/flake.nix`
-from the `vars.user.homeTemplate` template (default:
+from the `smudgenix.user.homeTemplate` template (default:
 `github:smudge/smudgenix#home`) and applies it. It never clones or
 overwrites anything; edit that file for per-home overrides. The generated flake
 follows the system's nixpkgs (via `/etc/nixos/flake.lock`), so home and system
@@ -49,8 +50,8 @@ nix run home-manager -- switch
 Updates are driven by what is pushed upstream:
 
 - `nixos-upgrade.timer` refreshes `/etc/nixos/flake.lock` and rebuilds daily, at
-  `vars.autoUpdateTime` (default `"04:00"`) in `vars.timezone`, or at any systemd
-  calendar spec given as `vars.autoUpdateDates`.
+  `smudgenix.autoUpdate.time` (default `"04:00"`) in `time.timeZone`, or at any
+  systemd calendar spec given as `smudgenix.autoUpdate.dates`.
 - `home-manager-auto-update.timer` (user) refreshes
   `~/.config/home-manager/flake.lock` and re-applies daily.
 
