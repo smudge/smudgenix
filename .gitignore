@@ -1,0 +1,2 @@
+# Lockfiles belong to the per-host flake (/etc/nixos), not here.
+flake.lock

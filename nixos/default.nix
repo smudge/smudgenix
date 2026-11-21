@@ -21,6 +21,7 @@ in
       (import ./i18n.nix { inherit vars; })
       (import ./inputs.nix { inherit vars; })
       (import ./desktop.nix { inherit vars; })
+      (import ./userland.nix { inherit vars; })
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
         time.timeZone = vars.timezone;
@@ -29,8 +30,7 @@ in
           isNormalUser = true;
           description = vars.user.description;
           extraGroups = [ "networkmanager" "wheel" "lp" "input" "video"];
-          packages = with pkgs; [
-            home-manager
+          packages = [
             inputs.codex-cli-nix.packages.${system}.default
           ];
         };

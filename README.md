@@ -1,64 +1,45 @@
-# Example Usage:
+# smudgenix
 
-`/etc/nixos/flake.nix` (with customizations and example nixos.hardware choice):
+Bootstraps and keeps a system up to date. Host-specific config lives in a
+small, uncommitted per-host flake; user-level (sudo-free) config lives in a
+separate home-manager flake.
 
-```nix
-{
-  description = "Bootstrap flake for NixOS";
-
-  inputs.nixos.url = "path:/home/smudge/.config/nixos";
-
-  outputs = { self, nixos }: {
-    nixosConfigurations = let
-      vars = {
-        hostname = "<YOUR HOSTNAME HERE>";
-        timezone = "UTC";
-        hiDPI = true;
-        user = {
-          name = "<YOUR USERNAME HERE>";
-          description = "<YOUR HUMAN NAME HERE>";
-        };
-      };
-    in {
-      ${vars.hostname} = nixos.outputs.nixosConfigurations.default {
-        inherit vars;
-        extraModules = [
-          (import "/etc/nixos/hardware-configuration.nix")
-          nixos.hardware.nixosModules.<YOUR NIXOS HARDWARE TYPE>
-          ({ config, pkgs, ... }: {
-            console.font = "${pkgs.terminus_font}/share/consolefonts/ter-u28n.psf.gz";
-
-            services.xserver.videoDrivers = ["modesetting"];
-            services.fwupd.enable = true;
-            services.tlp = {
-              settings = {
-                #TLP_DEFAULT_MODE = "BAT";
-                #TLP_PERSISTENT_DEFAULT = 1;
-                CPU_BOOST_ON_AC = 0;
-                CPU_BOOST_ON_BAT = 0;
-                CPU_HWP_DYN_BOOST_ON_AC=0;
-                CPU_HWP_DYN_BOOST_ON_BAT=0;
-                CPU_ENERGY_PERF_POLICY_ON_AC="default";
-                CPU_ENERGY_PERF_POLICY_ON_BAT="power";
-                CPU_SCALING_GOVERNOR_ON_BATTERY = "powersave";
-                RUNTIME_PM_ON_AC = "auto";
-                RUNTIME_PM_ON_BAT = "auto";
-              };
-            };
-          })
-        ];
-      };
-      default = self.nixosConfigurations.${vars.hostname};
-    };
-  };
-}
+```
+github:smudge/smudgenix ──► /etc/nixos/flake.nix              (per-host)  → sudo nixos-rebuild switch
+github:smudge/dotfiles  ──► ~/.config/home-manager/flake.nix  (per-home)  → home-manager switch
 ```
 
-You may keep your previously generated `hardware-configuration.nix`.
+## NixOS
 
-To rebuild and switch, run:
+Generate the per-host flake next to your `hardware-configuration.nix`, then
+fill in the vars (hostname, user, hardware module, overrides):
 
 ```bash
-sudo nix flake update --extra-experimental-features nix-command --extra-experimental-features flakes
-sudo nixos-rebuild switch --impure
+cd /etc/nixos
+sudo nix --extra-experimental-features 'nix-command flakes' flake init -t github:smudge/smudgenix
+sudoedit /etc/nixos/flake.nix
+sudo nixos-rebuild switch
 ```
+
+On first login, a user service generates `~/.config/home-manager/flake.nix`
+from the `vars.user.dotfiles` template (default:
+`github:smudge/dotfiles?dir=home-manager`) and applies it. It never clones or
+overwrites anything; edit that file for per-home overrides.
+
+## Updates
+
+Updates are driven by what is pushed upstream:
+
+- `nixos-upgrade.timer` refreshes `/etc/nixos/flake.lock` and rebuilds daily.
+- `home-manager-auto-update.timer` (user) refreshes
+  `~/.config/home-manager/flake.lock` and re-applies daily.
+
+To update manually:
+
+```bash
+sudo nix flake update --flake /etc/nixos && sudo nixos-rebuild switch
+cd ~/.config/home-manager && nix flake update && home-manager switch
+```
+
+For local iteration, point either per-host flake's input at a checkout with
+`path:/path/to/checkout` instead of the GitHub URL.

@@ -1,4 +1,4 @@
-{ inputs, nixpkgs, home-manager }:
+{ inputs, nixpkgs }:
 
 let
   lib = nixpkgs.lib;

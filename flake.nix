@@ -3,8 +3,10 @@
 #   │   └─ default.nix
 #   ├─ ./macos
 #   │   └─ default.nix
-#   └─ ./nix
-#       └─ default.nix
+#   ├─ ./nix
+#   │   └─ default.nix
+#   └─ ./template
+#       └─ flake.nix   (per-host, uncommitted /etc/nixos flake)
 
 {
   description = "An all-in-one tool for managing Nix, NixOS, and macOS systems";
@@ -13,12 +15,11 @@
     # nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixos-hardware.url = "github:nixos/nixos-hardware/master";
-    nix-darwin = { url = "github:nix-darwin/nix-darwin/nix-darwin-25.05"; inputs.nixpkgs.follows = "nixpkgs"; };
-    home-manager = { url = "github:nix-community/home-manager/release-25.05"; inputs.nixpkgs.follows = "nixpkgs"; };
+    nix-darwin = { url = "github:nix-darwin/nix-darwin"; inputs.nixpkgs.follows = "nixpkgs"; };
     codex-cli-nix.url = "github:sadjow/codex-cli-nix";
   };
 
-  outputs = inputs @ { self, nixpkgs, nixos-hardware, nix-darwin, home-manager, ... }: {
+  outputs = inputs @ { self, nixpkgs, nixos-hardware, nix-darwin, ... }: {
     hardware = nixos-hardware;
 
     nixosConfigurations = (import ./nixos {
@@ -30,7 +31,13 @@
     });
 
     nixConfigurations = (import ./nix {
-      inherit inputs nixpkgs home-manager;
+      inherit inputs nixpkgs;
     });
+
+    # cd /etc/nixos && sudo nix flake init -t github:smudge/smudgenix
+    templates.default = {
+      path = ./template;
+      description = "Per-host NixOS flake (lives uncommitted in /etc/nixos)";
+    };
   };
 }
