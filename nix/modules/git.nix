@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.smudgenix.git;
@@ -27,6 +27,9 @@ in
 
     programs.git = {
       enable = true;
+      # gitFull bundles the libsecret credential helper (and matches the system
+      # git on smudgenix hosts).
+      package = lib.mkDefault (if pkgs.stdenv.hostPlatform.isLinux then pkgs.gitFull else pkgs.git);
       settings = {
         user = { inherit (cfg) name email; };
         init.defaultBranch = "main";
