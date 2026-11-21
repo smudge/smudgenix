@@ -4,8 +4,8 @@ lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
   dconf = {
     settings = {
       "org/gnome/desktop/interface" = {
-          gtk-theme = "Adwaita-dark";
-          color-scheme = "prefer-dark";
+        gtk-theme = "Adwaita-dark";
+        color-scheme = "prefer-dark";
       };
     };
   };

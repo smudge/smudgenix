@@ -1,7 +1,7 @@
 # NixOS front-end. Hosts configure it through typed `smudgenix.*` options
 # (plus native NixOS options such as networking.hostName, time.timeZone and
 # system.stateVersion).
-{ inputs, nixpkgs }:
+{ nixpkgs }:
 
 let
   module = {

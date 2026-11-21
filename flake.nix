@@ -24,7 +24,7 @@
   };
 
   outputs = inputs @ { self, nixpkgs, nixos-hardware, nix-darwin, ... }: let
-    nixos = import ./nixos { inherit inputs nixpkgs; };
+    nixos = import ./nixos { inherit nixpkgs; };
     home = import ./nix { inherit inputs nixpkgs; };
   in {
     hardware = nixos-hardware;

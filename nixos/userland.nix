@@ -12,7 +12,7 @@ let
       { key = "gitEmail"; value = cfg.git.email; }
     ];
 
-  # Builds & activates the per-host home flake in ~/.config/home-manager,
+  # Builds & activates the per-home flake in ~/.config/home-manager,
   # without depending on a (possibly version-mismatched) home-manager CLI.
   # Skips (with a desktop notification) while the flake still has unfilled
   # @placeholders@, e.g. a git identity the bootstrap could not fill in.
@@ -61,10 +61,10 @@ in
   };
 
   config = {
-    # On first login, generate an uncommitted per-host home flake from the
+    # On first login, generate an uncommitted per-home flake from the
     # smudgenix home template (never cloning or overwriting anything), then apply it.
     systemd.user.services.home-manager-bootstrap = lib.recursiveUpdate common {
-      description = "Bootstrap per-host home-manager flake";
+      description = "Bootstrap per-home home-manager flake";
       wantedBy = [ "default.target" ];
       unitConfig.ConditionPathExists = "!%h/.config/home-manager/flake.nix";
       script = ''
@@ -87,7 +87,7 @@ in
 
     # Keep userland current with whatever has been pushed upstream.
     systemd.user.services.home-manager-auto-update = lib.recursiveUpdate common {
-      description = "Update & apply per-host home-manager flake";
+      description = "Update & apply per-home home-manager flake";
       unitConfig.ConditionPathExists = "%h/.config/home-manager/flake.nix";
       script = ''
         set -euo pipefail
