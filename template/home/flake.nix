@@ -43,6 +43,9 @@
           # Home-specific overrides & additions go here, e.g.:
           # smudgenix.ai.enable = false;
           # home.packages = [ pkgs.hello ];
+          # programs.git.settings.pull.rebase = false;
+          # programs.git.settings.alias.co = "checkout";
+          # programs.git.ignores = [ ".envrc" ];
         })
       ];
     };
