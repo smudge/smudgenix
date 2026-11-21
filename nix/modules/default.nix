@@ -12,7 +12,7 @@
     ./apps.nix
   ];
 
-  options.my = {
+  options.smudgenix = {
     dev.enable = lib.mkEnableOption "development toolchains" // { default = true; };
     ai.enable = lib.mkEnableOption "AI coding tools" // { default = true; };
     apps.enable = lib.mkEnableOption "GUI applications" // { default = true; };

@@ -1,6 +1,6 @@
 { config, pkgs, lib, ... }:
 
-lib.mkIf config.my.ai.enable {
+lib.mkIf config.smudgenix.ai.enable {
   home.packages = with pkgs; [
     claude-code
     opencode

@@ -35,7 +35,7 @@
       modules = [
         ({ config, pkgs, lib, ... }: {
           # Home-specific overrides & additions go here, e.g.:
-          # my.ai.enable = false;
+          # smudgenix.ai.enable = false;
           # home.packages = [ pkgs.hello ];
         })
       ];
