@@ -9,9 +9,9 @@
 #
 #   home-manager switch
 #
-# Pull in upstream changes with:
+# Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   nix flake update && home-manager switch
+#   ~/.config/home-manager/rebuild_flake.sh
 
 {
   description = "Per-home home-manager config";

@@ -12,6 +12,13 @@ let
       { key = "gitEmail"; value = cfg.git.email; }
     ];
 
+  # Use the gh login (if any) for GitHub API access.
+  githubToken = ''
+    if token=$(gh auth token 2>/dev/null); then
+      export NIX_CONFIG="access-tokens = github.com=$token"
+    fi
+  '';
+
   # Builds & activates the per-home flake in ~/.config/home-manager,
   # without depending on a (possibly version-mismatched) home-manager CLI.
   # Skips (with a desktop notification) while the flake still has unfilled
@@ -28,7 +35,7 @@ let
   '';
 
   common = {
-    path = [ config.nix.package pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.libnotify ];
+    path = [ config.nix.package pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.libnotify pkgs.gh ];
     unitConfig = {
       ConditionUser = cfg.name;
     };
@@ -69,6 +76,7 @@ in
       unitConfig.ConditionPathExists = "!%h/.config/home-manager/flake.nix";
       script = ''
         set -euo pipefail
+        ${githubToken}
         mkdir -p "$HOME/.config/home-manager"
         cd "$HOME/.config/home-manager"
         nix flake init -t '${cfg.homeTemplate}'
@@ -91,6 +99,7 @@ in
       unitConfig.ConditionPathExists = "%h/.config/home-manager/flake.nix";
       script = ''
         set -euo pipefail
+        ${githubToken}
         cd "$HOME/.config/home-manager"
         nix flake update
         ${activate}

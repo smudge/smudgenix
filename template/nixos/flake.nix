@@ -8,7 +8,7 @@
 #
 # Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   sudo /etc/nixos/rebuild_flake.sh
+#   /etc/nixos/rebuild_flake.sh
 
 {
   description = "Per-host NixOS config";
