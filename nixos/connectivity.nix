@@ -1,7 +1,7 @@
 { vars ? {} }:
 { config, ... }: let
-  v = vars // {
-  };
+  v = {
+  } // vars;
 in {
   # Enable networking.
   networking.networkmanager.enable = true;

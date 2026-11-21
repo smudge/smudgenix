@@ -25,7 +25,7 @@ in
       (import ./gaming.nix { inherit vars; })
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
-        time.timeZone = vars.timezone;
+        time.timeZone = lib.mkIf (vars ? timezone) vars.timezone;
 
         users.users.${vars.user.name} = {
           isNormalUser = true;

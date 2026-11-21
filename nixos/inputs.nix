@@ -1,7 +1,7 @@
 { vars ? {} }:
 { config, lib, pkgs, ... }: let
-  v = vars // {
-  };
+  v = {
+  } // vars;
 in {
   # Support trackpads.
   services.libinput.enable = true;

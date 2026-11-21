@@ -1,7 +1,7 @@
 { vars ? {} }:
 { config, pkgs, ... }: let
-  v = vars // {
-  };
+  v = {
+  } // vars;
 in {
   # Use hyprland:
   programs.hyprland.enable = true;

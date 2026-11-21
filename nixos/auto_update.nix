@@ -1,7 +1,15 @@
 { vars ? {} }:
-{ config, ... }: let
-  v = vars // {
-  };
+{ config, lib, ... }: let
+  v = {
+    # Time of day (HH:MM) to update, in the host's `timezone` if set.
+    autoUpdateTime = "04:00";
+    # Or any full systemd calendar spec (overrides autoUpdateTime).
+    autoUpdateDates = null;
+  } // vars;
+
+  dates =
+    if v.autoUpdateDates != null then v.autoUpdateDates
+    else "*-*-* ${v.autoUpdateTime}:00" + lib.optionalString (v ? timezone) " ${v.timezone}";
 in {
   system.autoUpgrade = {
     enable = true;
@@ -9,7 +17,7 @@ in {
     flake = "/etc/nixos";
     flags = [ "--recreate-lock-file" ];
     allowReboot = true;
-    dates = "8:00";
+    dates = lib.mkDefault dates;
   };
 
   nix.gc = {

@@ -1,7 +1,7 @@
 { vars ? {} }:
 { config, ... }: let
-  v = vars // {
-  };
+  v = {
+  } // vars;
 in {
   services.pulseaudio.enable = false;
   security.rtkit.enable = true;

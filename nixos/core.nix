@@ -1,11 +1,11 @@
 { vars ? {} }:
 { config, pkgs, lib, ... }: let
-  v = vars // {
+  v = {
     browser = "firefox";
     terminal = "alacritty";
     finder = "nemo";
     preview = "eog";
-  };
+  } // vars;
 in {
   # Use latest Linux kernel:
   boot.kernelPackages = pkgs.linuxPackages_latest;

@@ -1,8 +1,8 @@
 { vars ? {} }:
 { config, ... }: let
-  v = vars // {
+  v = {
     windowsCompat = false;
-  };
+  } // vars;
 in {
   # Prefer GRUB:
   boot.loader = {

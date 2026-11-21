@@ -1,11 +1,11 @@
 { vars ? {} }:
 { config, ... }: let
-  v = vars // {
+  v = {
     hiDPI = false;
-  };
+  } // vars;
 
   # High DPI adjustments for primary screen/monitor:
-  hiDPIConfig = if vars.hiDPI then {
+  hiDPIConfig = if v.hiDPI then {
     boot.loader.grub.fontSize = 60;
 
     environment.variables = {

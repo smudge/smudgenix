@@ -30,14 +30,16 @@ overwrites anything; edit that file for per-home overrides.
 
 Updates are driven by what is pushed upstream:
 
-- `nixos-upgrade.timer` refreshes `/etc/nixos/flake.lock` and rebuilds daily.
+- `nixos-upgrade.timer` refreshes `/etc/nixos/flake.lock` and rebuilds daily, at
+  `vars.autoUpdateTime` (default `"04:00"`) in `vars.timezone`, or at any systemd
+  calendar spec given as `vars.autoUpdateDates`.
 - `home-manager-auto-update.timer` (user) refreshes
   `~/.config/home-manager/flake.lock` and re-applies daily.
 
 To update manually:
 
 ```bash
-sudo nix flake update --flake /etc/nixos && sudo nixos-rebuild switch
+sudo /etc/nixos/rebuild_flake.sh   # regenerates flake.lock, then switches
 cd ~/.config/home-manager && nix flake update && home-manager switch
 ```
 

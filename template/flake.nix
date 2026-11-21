@@ -6,9 +6,9 @@
 #
 #   sudo nixos-rebuild switch
 #
-# Pull in upstream changes with:
+# Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   sudo nix flake update --flake /etc/nixos && sudo nixos-rebuild switch
+#   sudo /etc/nixos/rebuild_flake.sh
 
 {
   description = "Per-host NixOS config";
@@ -22,6 +22,9 @@
         timezone = "UTC";
         hiDPI = false;
         gaming = false;
+        # Daily auto-update time, in `timezone` (default "04:00"), or any
+        # systemd calendar spec via `autoUpdateDates`:
+        # autoUpdateTime = "04:00";
         user = {
           name = "<YOUR USERNAME HERE>";
           description = "<YOUR HUMAN NAME HERE>";

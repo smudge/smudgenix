@@ -1,8 +1,8 @@
 { vars ? {} }:
 { config, ... }: let
-  v = vars // {
+  v = {
     locale = "en_US.UTF-8";
-  };
+  } // vars;
 in {
   i18n.defaultLocale = v.locale;
   i18n.extraLocaleSettings = {
