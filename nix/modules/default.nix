@@ -3,6 +3,7 @@
 {
   imports = [
     ./cli.nix
+    ./git.nix
     ./shell.nix
     ./tmux.nix
     ./nvim.nix

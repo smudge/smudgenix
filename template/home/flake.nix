@@ -34,6 +34,12 @@
       stateVersion = "@stateVersion@";
       modules = [
         ({ config, pkgs, lib, ... }: {
+          # Required: your git identity.
+          smudgenix.git = {
+            name = "@gitName@";
+            email = "@gitEmail@";
+          };
+
           # Home-specific overrides & additions go here, e.g.:
           # smudgenix.ai.enable = false;
           # home.packages = [ pkgs.hello ];

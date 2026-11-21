@@ -12,7 +12,6 @@ in
     eza
     fzf
     fd
-    git
     gh
     ncdu
     ripgrep

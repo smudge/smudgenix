@@ -5,16 +5,30 @@ let
 
   system = pkgs.stdenv.hostPlatform.system;
 
+  # sed expressions pre-filling the home template's git identity, if known.
+  fillGit = lib.concatMapStrings (p: lib.optionalString (p.value != null)
+    " -e ${lib.escapeShellArg "s|@${p.key}@|${p.value}|g"}") [
+      { key = "gitName"; value = cfg.git.name; }
+      { key = "gitEmail"; value = cfg.git.email; }
+    ];
+
   # Builds & activates the per-host home flake in ~/.config/home-manager,
   # without depending on a (possibly version-mismatched) home-manager CLI.
+  # Skips (with a desktop notification) while the flake still has unfilled
+  # @placeholders@, e.g. a git identity the bootstrap could not fill in.
   activate = ''
     cd "$HOME/.config/home-manager"
+    if grep -q '"@[A-Za-z]*@"' flake.nix; then
+      notify-send --app-name=smudgenix "Finish setting up home-manager" \
+        "Fill in the @placeholders@ in ~/.config/home-manager/flake.nix; it is applied on the next daily update." || true
+      exit 0
+    fi
     out=$(nix build --no-link --print-out-paths ".#homeConfigurations.\"$USER\".activationPackage")
     HOME_MANAGER_BACKUP_EXT=hm-bak "$out/activate"
   '';
 
   common = {
-    path = [ config.nix.package pkgs.git pkgs.gnused pkgs.coreutils ];
+    path = [ config.nix.package pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.libnotify ];
     unitConfig = {
       ConditionUser = cfg.name;
     };
@@ -26,10 +40,24 @@ let
   };
 in
 {
-  options.smudgenix.user.homeTemplate = lib.mkOption {
-    type = lib.types.str;
-    default = "github:smudge/smudgenix#home";
-    description = "Flake template used to generate ~/.config/home-manager on first login.";
+  options.smudgenix.user = {
+    homeTemplate = lib.mkOption {
+      type = lib.types.str;
+      default = "github:smudge/smudgenix#home";
+      description = "Flake template used to generate ~/.config/home-manager on first login.";
+    };
+    git = {
+      name = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Git name to pre-fill in the generated home flake.";
+      };
+      email = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Git email to pre-fill in the generated home flake.";
+      };
+    };
   };
 
   config = {
@@ -49,7 +77,7 @@ in
         sed -i \
           -e "s|@username@|$USER|g" \
           -e 's|@system@|${system}|g' \
-          -e 's|@stateVersion@|${config.system.nixos.release}|g' \
+          -e 's|@stateVersion@|${config.system.nixos.release}|g'${fillGit} \
           -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
           -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
           flake.nix

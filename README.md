@@ -25,7 +25,9 @@ sudo nixos-rebuild switch
 On first login, a user service generates `~/.config/home-manager/flake.nix`
 from the `smudgenix.user.homeTemplate` template (default:
 `github:smudge/smudgenix#home`) and applies it. It never clones or
-overwrites anything; edit that file for per-home overrides. The generated flake
+overwrites anything; edit that file for per-home overrides. Its git identity is
+pre-filled from `smudgenix.user.git` if set; otherwise you are notified to fill
+it in, and it is applied on the next daily update. The generated flake
 follows the system's nixpkgs (via `/etc/nixos/flake.lock`), so home and system
 share one nixpkgs.
 
@@ -35,8 +37,9 @@ Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 ## Userland only (any Nix-enabled home)
 
 On macOS, another distro, or anywhere without sudo, use just the home-manager
-half. Fill in the `@placeholders@` (`stateVersion`: the current home-manager
-release, e.g. from `home-manager --version`), then apply:
+half. Fill in the `@placeholders@`, including your git identity (required), and
+`stateVersion` (the current home-manager release, e.g. from
+`home-manager --version`), then apply:
 
 ```bash
 mkdir -p ~/.config/home-manager && cd ~/.config/home-manager

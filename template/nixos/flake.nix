@@ -33,6 +33,9 @@
             user = {
               name = "<YOUR USERNAME HERE>";
               description = "<YOUR HUMAN NAME HERE>";
+              # Pre-fills the git identity in the generated home flake
+              # (otherwise, fill it in there after first login):
+              # git = { name = "<GIT NAME>"; email = "<GIT EMAIL>"; };
             };
             hiDPI = false;
             gaming = false;
