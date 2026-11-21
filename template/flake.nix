@@ -21,6 +21,7 @@
         hostname = "<YOUR HOSTNAME HERE>";
         timezone = "UTC";
         hiDPI = false;
+        gaming = false;
         user = {
           name = "<YOUR USERNAME HERE>";
           description = "<YOUR HUMAN NAME HERE>";

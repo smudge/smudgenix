@@ -22,6 +22,7 @@ in
       (import ./inputs.nix { inherit vars; })
       (import ./desktop.nix { inherit vars; })
       (import ./userland.nix { inherit vars; })
+      (import ./gaming.nix { inherit vars; })
       ({ config, pkgs, ... }: {
         networking.hostName = vars.hostname;
         time.timeZone = vars.timezone;

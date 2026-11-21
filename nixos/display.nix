@@ -15,7 +15,6 @@
       PLASMA_USE_QT_SCALING = "1";
       _JAVA_OPTIONS = "-Dsun.java2d.uiScale=2";
     };
-
   } else {};
 in
 {
