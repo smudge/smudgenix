@@ -32,7 +32,17 @@ in
       package = lib.mkDefault (if pkgs.stdenv.hostPlatform.isLinux then pkgs.gitFull else pkgs.git);
       settings = {
         user = { inherit (cfg) name email; };
+      } // lib.mapAttrsRecursive (_: lib.mkDefault) {
+        # Opinionated defaults (override any of them per-home).
         init.defaultBranch = "main";
+        alias.lg = "log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit";
+        push.autoSetupRemote = true;
+        fetch.prune = true;
+        pull.rebase = true;
+        rebase.autoStash = true;
+        merge.conflictStyle = "zdiff3";
+        diff.colorMoved = "default";
+        rerere.enabled = true;
       };
     };
   };
