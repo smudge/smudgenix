@@ -2,8 +2,8 @@
 { config, pkgs, lib, ... }: let
   v = {
     user = {
-      # A home-manager flake providing `templates.default` and `lib.mkHome`.
-      dotfiles = "github:smudge/dotfiles?dir=home-manager";
+      # Flake template used to generate ~/.config/home-manager on first login.
+      homeTemplate = "github:smudge/smudgenix#home";
     } // (vars.user or {});
   } // (builtins.removeAttrs vars [ "user" ]);
 
@@ -30,7 +30,7 @@
   };
 in {
   # On first login, generate an uncommitted per-host home flake from the
-  # dotfiles template (never cloning or overwriting anything), then apply it.
+  # smudgenix home template (never cloning or overwriting anything), then apply it.
   systemd.user.services.home-manager-bootstrap = lib.recursiveUpdate common {
     description = "Bootstrap per-host home-manager flake";
     wantedBy = [ "default.target" ];
@@ -39,14 +39,14 @@ in {
       set -euo pipefail
       mkdir -p "$HOME/.config/home-manager"
       cd "$HOME/.config/home-manager"
-      nix flake init -t '${v.user.dotfiles}'
+      nix flake init -t '${v.user.homeTemplate}'
       # Fill in the placeholders, and follow the system's pinned nixpkgs (so
       # home and system share one nixpkgs, in lockstep).
       sed -i \
         -e "s|@username@|$USER|g" \
         -e 's|@system@|${system}|g' \
         -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
-        -e 's|^\( *\)# \(dotfiles\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
+        -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
         flake.nix
       ${activate}
     '';

@@ -31,8 +31,8 @@
         user = {
           name = "<YOUR USERNAME HERE>";
           description = "<YOUR HUMAN NAME HERE>";
-          # Home-manager flake used to bootstrap ~/.config/home-manager:
-          # dotfiles = "github:smudge/dotfiles?dir=home-manager";
+          # Flake template used to bootstrap ~/.config/home-manager:
+          # homeTemplate = "github:smudge/smudgenix#home";
         };
       };
     in {

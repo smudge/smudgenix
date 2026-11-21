@@ -1,12 +1,12 @@
 # smudgenix
 
 Bootstraps and keeps a system up to date. Host-specific config lives in a
-small, uncommitted per-host flake; user-level (sudo-free) config lives in a
-separate home-manager flake.
+small, uncommitted per-host flake; user-level (sudo-free) home-manager config
+lives in a small, uncommitted per-home flake. Both build on this repo.
 
 ```
-github:smudge/smudgenix ──► /etc/nixos/flake.nix              (per-host)  → sudo nixos-rebuild switch
-github:smudge/dotfiles  ──► ~/.config/home-manager/flake.nix  (per-home)  → home-manager switch
+github:smudge/smudgenix ─┬─► /etc/nixos/flake.nix              (per-host)  → sudo nixos-rebuild switch
+                         └─► ~/.config/home-manager/flake.nix  (per-home)  → home-manager switch
 ```
 
 ## NixOS
@@ -22,14 +22,27 @@ sudo nixos-rebuild switch
 ```
 
 On first login, a user service generates `~/.config/home-manager/flake.nix`
-from the `vars.user.dotfiles` template (default:
-`github:smudge/dotfiles?dir=home-manager`) and applies it. It never clones or
+from the `vars.user.homeTemplate` template (default:
+`github:smudge/smudgenix#home`) and applies it. It never clones or
 overwrites anything; edit that file for per-home overrides. The generated flake
 follows the system's nixpkgs (via `/etc/nixos/flake.lock`), so home and system
 share one nixpkgs.
 
 Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 `nix-shell -p`) resolves to the system's flake-pinned nixpkgs.
+
+## Userland only (any Nix-enabled home)
+
+On macOS, another distro, or anywhere without sudo, use just the home-manager
+half. Fill in the `@placeholders@` (`stateVersion`: the current home-manager
+release, e.g. from `home-manager --version`), then apply:
+
+```bash
+mkdir -p ~/.config/home-manager && cd ~/.config/home-manager
+nix flake init -t github:smudge/smudgenix#home
+$EDITOR flake.nix
+nix run home-manager -- switch
+```
 
 ## Updates
 
