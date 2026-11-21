@@ -24,10 +24,8 @@ in
   inherit module;
 
   mkSystem = {
-    system ? "x86_64-linux",
     modules ? [],
   }: nixpkgs.lib.nixosSystem {
-    inherit system;
     modules = [ module ] ++ modules;
   };
 }
