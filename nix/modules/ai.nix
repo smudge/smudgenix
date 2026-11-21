@@ -5,4 +5,7 @@ lib.mkIf config.smudgenix.ai.enable {
     claude-code
     opencode
   ];
+
+  # Claude Code's personal (uncommitted) project settings.
+  programs.git.ignores = [ ".claude/settings.local.json" ];
 }

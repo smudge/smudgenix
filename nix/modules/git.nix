@@ -44,6 +44,10 @@ in
         diff.colorMoved = "default";
         rerere.enabled = true;
       };
+
+      # `nix build` output links, and (on macOS) Finder metadata.
+      ignores = [ "/result" "/result-*" ]
+        ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin ".DS_Store";
     };
   };
 }
