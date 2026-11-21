@@ -18,6 +18,9 @@ in
   mkHome = {
     username,
     system,
+    # The home-manager release this home was first set up with. Never change
+    # it after setup.
+    stateVersion,
     homeDirectory ? null,
     modules ? [],
   }: let
@@ -35,6 +38,7 @@ in
         home.username = username;
         home.homeDirectory =
           if homeDirectory != null then homeDirectory else defaultHome;
+        home.stateVersion = stateVersion;
       }
     ] ++ modules;
   };

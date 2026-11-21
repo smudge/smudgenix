@@ -18,11 +18,5 @@
     apps.enable = lib.mkEnableOption "GUI applications" // { default = true; };
   };
 
-  config = {
-    programs.home-manager.enable = true;
-
-    # This value determines the Home Manager release that your configuration is
-    # compatible with. Override per-host if a machine was set up on an older one.
-    home.stateVersion = lib.mkDefault "26.05";
-  };
+  config.programs.home-manager.enable = true;
 }

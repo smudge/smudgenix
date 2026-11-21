@@ -29,6 +29,9 @@
     homeConfigurations."@username@" = smudgenix.lib.mkHome {
       username = "@username@";
       system = "@system@";
+      # home-manager release this home was first set up with. Never change it
+      # after setup:
+      stateVersion = "@stateVersion@";
       modules = [
         ({ config, pkgs, lib, ... }: {
           # Home-specific overrides & additions go here, e.g.:

@@ -45,6 +45,7 @@ in {
       sed -i \
         -e "s|@username@|$USER|g" \
         -e 's|@system@|${system}|g' \
+        -e 's|@stateVersion@|${config.system.nixos.release}|g' \
         -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
         -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
         flake.nix
