@@ -12,7 +12,7 @@ github:smudge/dotfiles  ──► ~/.config/home-manager/flake.nix  (per-home)  
 ## NixOS
 
 Generate the per-host flake next to your `hardware-configuration.nix`, then
-fill in the vars (hostname, user, hardware module, overrides):
+fill in the vars (hostname, stateVersion, user, hardware module, overrides):
 
 ```bash
 cd /etc/nixos

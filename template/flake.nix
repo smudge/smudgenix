@@ -20,6 +20,9 @@
       vars = {
         hostname = "<YOUR HOSTNAME HERE>";
         timezone = "UTC";
+        # NixOS release of this host's first install. Never change it after
+        # installing (`nixos-version` shows the current release):
+        stateVersion = "26.11";
         hiDPI = false;
         gaming = false;
         # Daily auto-update time, in `timezone` (default "04:00"), or any
