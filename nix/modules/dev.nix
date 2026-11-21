@@ -5,7 +5,5 @@ lib.mkIf config.smudgenix.dev.enable {
     nodejs
     yarn
     rustup
-    spirv-tools
-    vulkan-validation-layers
   ];
 }

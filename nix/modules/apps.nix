@@ -7,11 +7,5 @@ lib.mkIf config.smudgenix.apps.enable {
     firefox
     discord
     obsidian
-    tiled
-    ludusavi
-  ]
-  ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-    rescuetime
-    (wine.override { wineBuild = "wine64"; })
   ];
 }
