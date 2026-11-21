@@ -39,6 +39,8 @@
             # Daily auto-update time, in `time.timeZone` (or any systemd
             # calendar spec via `autoUpdate.dates`):
             # autoUpdate.time = "04:00";
+            # Reboot after updates that need it (default: notify instead):
+            # autoUpdate.reboot = true;
           };
 
           # Host-specific overrides & additions go here.

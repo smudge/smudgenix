@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.smudgenix.autoUpdate;
@@ -17,6 +17,10 @@ in
       example = "Sun 03:00";
       description = "Any systemd calendar spec to update at (overrides `time`).";
     };
+    reboot = lib.mkEnableOption ''
+      rebooting automatically when an update needs it. Otherwise, the primary
+      user gets a desktop notification that a reboot is pending
+    '';
   };
 
   config = {
@@ -25,11 +29,43 @@ in
       # Track the per-host flake, refreshing its lock to whatever is upstream.
       flake = "/etc/nixos";
       flags = [ "--recreate-lock-file" ];
-      allowReboot = true;
+      allowReboot = cfg.reboot;
       dates = lib.mkDefault (
         if cfg.dates != null then cfg.dates
         else "*-*-* ${cfg.time}:00" + lib.optionalString (tz != null) " ${tz}"
       );
+    };
+
+    # Without auto-reboot, notify the primary user (once per system generation)
+    # when the installed system needs a reboot: a new kernel, initrd or kernel
+    # modules, the same check auto-reboot uses.
+    systemd.user.services.smudgenix-reboot-check = lib.mkIf (!cfg.reboot) {
+      description = "Notify when a reboot is needed to finish updating";
+      unitConfig.ConditionUser = config.smudgenix.user.name;
+      path = [ pkgs.coreutils pkgs.libnotify ];
+      serviceConfig.Type = "oneshot";
+      script = ''
+        set -euo pipefail
+        parts() { readlink "$1"/{initrd,kernel,kernel-modules}; }
+        [ "$(parts /run/booted-system)" != "$(parts /run/current-system)" ] || exit 0
+
+        state="''${XDG_STATE_HOME:-$HOME/.local/state}/smudgenix/reboot-notified"
+        current=$(readlink /run/current-system)
+        [ "$(cat "$state" 2>/dev/null)" != "$current" ] || exit 0
+
+        notify-send --app-name=smudgenix --icon=system-reboot \
+          "Restart to finish updating" \
+          "An installed system update takes effect after a reboot."
+        mkdir -p "$(dirname "$state")"
+        echo "$current" > "$state"
+      '';
+    };
+    systemd.user.timers.smudgenix-reboot-check = lib.mkIf (!cfg.reboot) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnStartupSec = "2min";
+        OnUnitActiveSec = "1h";
+      };
     };
 
     nix.gc = {

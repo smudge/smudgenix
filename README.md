@@ -52,6 +52,8 @@ Updates are driven by what is pushed upstream:
 - `nixos-upgrade.timer` refreshes `/etc/nixos/flake.lock` and rebuilds daily, at
   `smudgenix.autoUpdate.time` (default `"04:00"`) in `time.timeZone`, or at any
   systemd calendar spec given as `smudgenix.autoUpdate.dates`.
+  It never reboots unless `smudgenix.autoUpdate.reboot = true`; instead, the
+  primary user gets a desktop notification when an update needs a reboot.
 - `home-manager-auto-update.timer` (user) refreshes
   `~/.config/home-manager/flake.lock` and re-applies daily.
 
