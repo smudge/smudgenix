@@ -31,9 +31,6 @@ in
           isNormalUser = true;
           description = vars.user.description;
           extraGroups = [ "networkmanager" "wheel" "lp" "input" "video"];
-          packages = [
-            inputs.codex-cli-nix.packages.${system}.default
-          ];
         };
 
         # The NixOS release this host was first installed with (see

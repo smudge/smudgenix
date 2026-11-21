@@ -16,7 +16,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixos-hardware.url = "github:nixos/nixos-hardware/master";
     nix-darwin = { url = "github:nix-darwin/nix-darwin"; inputs.nixpkgs.follows = "nixpkgs"; };
-    codex-cli-nix.url = "github:sadjow/codex-cli-nix";
   };
 
   outputs = inputs @ { self, nixpkgs, nixos-hardware, nix-darwin, ... }: {
