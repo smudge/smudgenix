@@ -16,11 +16,13 @@ in {
   # Because intel:
   hardware.enableRedistributableFirmware = lib.mkDefault true;
 
-  # Support flakes:
+  # Support flakes, and go flake-only (no channels; <nixpkgs> resolves to
+  # the system's flake nixpkgs):
   nix = {
     extraOptions = ''
       experimental-features = nix-command flakes
     '';
+    channel.enable = false;
   };
 
   # Disable the NixOS documentation app.

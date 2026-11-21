@@ -26,6 +26,9 @@ from the `vars.user.dotfiles` template (default:
 `github:smudge/dotfiles?dir=home-manager`) and applies it. It never clones or
 overwrites anything; edit that file for per-home overrides.
 
+Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
+`nix-shell -p`) resolves to the system's flake-pinned nixpkgs.
+
 ## Updates
 
 Updates are driven by what is pushed upstream:
