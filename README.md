@@ -24,7 +24,9 @@ sudo nixos-rebuild switch
 On first login, a user service generates `~/.config/home-manager/flake.nix`
 from the `vars.user.dotfiles` template (default:
 `github:smudge/dotfiles?dir=home-manager`) and applies it. It never clones or
-overwrites anything; edit that file for per-home overrides.
+overwrites anything; edit that file for per-home overrides. The generated flake
+follows the system's nixpkgs (via `/etc/nixos/flake.lock`), so home and system
+share one nixpkgs.
 
 Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 `nix-shell -p`) resolves to the system's flake-pinned nixpkgs.

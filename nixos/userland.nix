@@ -40,7 +40,14 @@ in {
       mkdir -p "$HOME/.config/home-manager"
       cd "$HOME/.config/home-manager"
       nix flake init -t '${v.user.dotfiles}'
-      sed -i -e "s|@username@|$USER|g" -e 's|@system@|${system}|g' flake.nix
+      # Fill in the placeholders, and follow the system's pinned nixpkgs (so
+      # home and system share one nixpkgs, in lockstep).
+      sed -i \
+        -e "s|@username@|$USER|g" \
+        -e 's|@system@|${system}|g' \
+        -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
+        -e 's|^\( *\)# \(dotfiles\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
+        flake.nix
       ${activate}
     '';
   };
