@@ -6,6 +6,7 @@
 let
   inherit (config.smudgenix) desktop;
   cfg = desktop.niri;
+  theme = import ../../theme pkgs;
 
   kdlValue = v:
     if lib.isBool v then lib.boolToString v
@@ -43,8 +44,8 @@ let
         default-column-width { proportion 0.5; }
         focus-ring {
             width 2
-            active-color "#c8c9cc"
-            inactive-color "#3a3c40"
+            active-color "${theme.accent}"
+            inactive-color "${theme.colors.base02}"
         }
         border {
             off
@@ -56,6 +57,10 @@ let
             offset x=0 y=5
             color "#0007"
         }
+    }
+
+    overview {
+        backdrop-color "${theme.colors.base00}"
     }
 
     // Let niri draw window decorations, rather than each app.

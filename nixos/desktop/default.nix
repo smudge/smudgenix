@@ -5,6 +5,7 @@
 
 let
   inherit (config.smudgenix) apps desktop;
+  theme = import ../../theme pkgs;
 in
 {
   imports = [
@@ -59,12 +60,19 @@ in
     # Hint to electron apps that they should use Wayland
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
 
-    # Symbol glyphs (powerline/nerd-font) for terminal UIs:
+    # The theme's fonts, and symbol glyphs (powerline/nerd-font) for
+    # terminal UIs:
     fonts.packages = with pkgs; [
+      theme.fonts.sans.package
+      theme.fonts.mono.package
       powerline-fonts
       powerline-symbols
       nerd-fonts.symbols-only
     ];
+    fonts.fontconfig.defaultFonts = {
+      sansSerif = [ theme.fonts.sans.name ];
+      monospace = [ theme.fonts.mono.name ];
+    };
 
     # Machine-wide defaults for GTK apps & GNOME. Users can still change them
     # (in GNOME Settings, or via home-manager's `dconf.settings`).
@@ -74,6 +82,10 @@ in
         "org/gnome/desktop/interface" = {
           color-scheme = "prefer-dark";
           gtk-theme = "Adwaita-dark";
+          accent-color = "orange"; # the closest to smudge's ember
+          font-name = "${theme.fonts.sans.name} 11";
+          document-font-name = "${theme.fonts.sans.name} 11";
+          monospace-font-name = "${theme.fonts.mono.name} 11";
         };
         "org/gnome/desktop/peripherals/keyboard" = {
           delay = lib.gvariant.mkUint32 desktop.keyRepeat.delay;
