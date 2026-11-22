@@ -14,8 +14,174 @@ devshells="${SMX_DEVSHELLS:-$HOME/.config/devshells}"
 
 args=("$@")
 
-say() { echo "smx: $*" >&2; }
-die() { say "$*"; exit 1; }
+# --- Output ---------------------------------------------------------------
+#
+# In a terminal, smx is quiet: each step is one line (with a spinner, then
+# ✓ or ✗), Nix's own output goes to a log, and only its warnings and errors
+# show. --verbose shows everything. Elsewhere (services, pipes, NO_COLOR),
+# output is plain, and complete.
+
+verbose=""
+fancy=""
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then fancy=1; fi
+
+# The theme's colors (from ./smx.nix), as terminal escapes.
+rgb() { printf '\033[38;2;%d;%d;%dm' "0x${1:1:2}" "0x${1:3:2}" "0x${1:5:2}"; }
+A="" D="" R="" G="" Y="" B="" N=""
+if [ -n "$fancy" ]; then
+  A=$(rgb "$color_accent") D=$(rgb "$color_dim") R=$(rgb "$color_red")
+  G=$(rgb "$color_green") Y=$(rgb "$color_yellow") B=$'\033[1m' N=$'\033[0m'
+fi
+
+say() { echo "${D}smx:${N} $*" >&2; }
+die() { echo "${R}smx:${N} $*" >&2; exit 1; }
+# Something to notice, in the accent color.
+notice() { echo "${A}▲${N} $*" >&2; }
+
+log_dir() { if [ "$(id -u)" = 0 ]; then echo "$os_state/logs"; else echo "$home_state/logs"; fi; }
+
+# A new log file for a step (keeping the last 30).
+new_log() {
+  dir=$(log_dir)
+  mkdir -p "$dir"
+  find "$dir" -maxdepth 1 -type f -printf '%T@ %p\n' | sort -rn | tail -n +31 | cut -d' ' -f2- | xargs -r rm -f
+  echo "$dir/$(date +%Y%m%d-%H%M%S)-${1// /-}.log"
+}
+
+# Nix's warnings in a log (plain, or internal-json), minus the noise.
+warnings_in() {
+  { sed -n 's/^@nix //p' "$1" | jq -r 'select(.action == "msg" and .level == 1) | .msg' 2>/dev/null
+    grep -E '^(warning|trace):' "$1" || true; } \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep -vE "not writing modified lock file|updating lock file|creating lock file|^warning: Git tree '.*' is dirty" \
+    | sort -u || true
+}
+
+show_warnings() {
+  w=$(warnings_in "$1")
+  [ -z "$w" ] || sed "s/^/  ${Y}/; s/\$/${N}/" <<<"$w" >&2
+}
+
+# The error in a failed step's log, and where the rest is.
+show_failure() {
+  plain=$(sed 's/\x1b\[[0-9;]*m//g' "$1")
+  if grep -q '^error' <<<"$plain"; then
+    sed -n '/^error/,$p' <<<"$plain" | head -30
+  else
+    tail -20 <<<"$plain"
+  fi | sed 's/^/  /' >&2
+  echo "  ${D}(all of it: $(tildify "$1"))${N}" >&2
+}
+
+SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+[ -z "$fancy" ] || trap 'printf "\033[?25h" >&2' EXIT
+
+# step <label> <command…>: runs a step. Its stdout goes to $step_out (a
+# file), and in a terminal its stderr to $step_log; elsewhere, both show.
+step() {
+  label=$1; shift
+  step_log=$(new_log "$label")
+  step_out="$step_log.out"
+  if [ -z "$fancy" ] || [ -n "$verbose" ]; then
+    if [ -n "$fancy" ]; then echo "${A}◆${N} ${B}$label${N}" >&2; else say "$label…"; fi
+    "$@" | tee "$step_out" >&2
+    return
+  fi
+  ("$@" >"$step_out" 2>"$step_log") &
+  pid=$!
+  i=0
+  printf '\033[?25l' >&2
+  while kill -0 "$pid" 2>/dev/null; do
+    printf '\r%s%s%s %s' "$A" "${SPIN[i++ % ${#SPIN[@]}]}" "$N" "$label" >&2
+    sleep 0.08
+  done
+  rc=0
+  wait "$pid" || rc=$?
+  printf '\r\033[K\033[?25h' >&2
+  if [ "$rc" = 0 ]; then
+    echo "${G}✓${N} $label" >&2
+    show_warnings "$step_log"
+  else
+    echo "${R}✗${N} $label" >&2
+    show_failure "$step_log"
+    exit "$rc"
+  fi
+}
+
+# build <label> <nix build args…>: builds, setting $built to the result. In
+# a terminal, nix-output-monitor shows the progress.
+build() {
+  label=$1; shift
+  if [ -z "$fancy" ] || [ -n "$verbose" ]; then
+    if [ -n "$fancy" ]; then echo "${A}◆${N} ${B}$label${N}" >&2; else say "$label…"; fi
+    built=$(nix build --no-link --print-out-paths "$@")
+    return
+  fi
+  log=$(new_log "$label")
+  out=$(mktemp)
+  echo "${A}◆${N} ${B}$label${N}" >&2
+  set +e
+  # (nom gets the progress, warnings and errors: not Nix's notes, or the
+  # builds' own output, which the log keeps.)
+  nix build --no-link --print-out-paths --log-format internal-json -v "$@" 2>&1 >"$out" \
+    | tee "$log" \
+    | grep --line-buffered -vE '^@nix \{"action":"msg","level":[2-9]|"type":101\}$' \
+    | nom --json >&2
+  rc=${PIPESTATUS[0]}
+  set -e
+  built=$(cat "$out")
+  rm -f "$out"
+  if [ "$rc" != 0 ]; then
+    echo "${R}✗${N} $label" >&2
+    echo "  ${D}(all of it: $(tildify "$log"))${N}" >&2
+    exit "$rc"
+  fi
+  echo "${G}✓${N} $label" >&2
+  show_warnings "$log"
+}
+
+# The packages that changed between two builds (or configs), in short.
+package_changes() {
+  [ -n "$1" ] && [ -n "$2" ] && [ "$1" != "$2" ] || return 0
+  # Lines like "firefox: 160.0.1 → 160.0.2, +1.2 MiB", leaving out files
+  # without versions (∅/ε) and size-only changes.
+  changes=$(nix store diff-closures "$1" "$2" 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g; s/, [+-][0-9.]+ [KMGT]?i?B$//' \
+    | grep '→' | grep -vE ': (∅|ε) → (∅|ε)$' || true)
+  [ -n "$changes" ] || { echo "  ${D}No package changes.${N}"; return 0; }
+  total=$(wc -l <<<"$changes")
+  head -n 12 <<<"$changes" | while IFS= read -r line; do
+    name=${line%%:*} rest=${line#*: }
+    versions=$rest
+    case "$versions" in
+      "∅ → "*) echo "  ${G}+${N} $name ${D}${versions#∅ → }${N}" ;;
+      *" → ∅") echo "  ${R}-${N} $name ${D}${versions% → ∅}${N}" ;;
+      *) echo "  ${A}~${N} $name ${D}${versions}${N}" ;;
+    esac
+  done
+  [ "$total" -le 12 ] || echo "  ${D}…and $((total - 12)) more${N}"
+}
+
+# What a relock changed: smudgenix's commit, and nixpkgs' date.
+lock_changes() {
+  before=$1 after=$2
+  summary() {
+    jq -r '.nodes as $n | ($n.nixos.locked // {}) as $s | ($n[$n.nixos.inputs.nixpkgs // "nixpkgs"].locked // {}) as $p
+      | [($s.rev // "")[0:7], ($p.lastModified // 0 | strftime("%b %-d"))] | @tsv' 2>/dev/null <<<"$1" || true
+  }
+  IFS=$'\t' read -r s1 p1 <<<"$(summary "$before")" || true
+  IFS=$'\t' read -r s2 p2 <<<"$(summary "$after")" || true
+  if [ "$s1" = "$s2" ] && [ "$p1" = "$p2" ]; then
+    echo "  ${D}smudgenix ${s2:-?} and nixpkgs ${p2:-?}: already the latest${N}"
+    return
+  fi
+  [ "$s1" = "$s2" ] || echo "  smudgenix ${D}${s1:-new}${N} → ${A}$s2${N}"
+  [ "$p1" = "$p2" ] || echo "  nixpkgs ${D}${p1:-new}${N} → ${A}$p2${N}"
+}
+
+confirm() {
+  read -r -p "$1 ${B}[y/N]${N} " answer
+  case "$answer" in y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
 
 tildify() { case "$1" in "$HOME"/*) echo "~${1#"$HOME"}" ;; *) echo "$1" ;; esac; }
 
@@ -59,6 +225,11 @@ Tools:
   env [<shell> [-f]]      Write a .envrc using a devShell from $(tildify "$devshells"),
                           or list them
   help                    Show this help
+
+Options:
+  --verbose               Show everything Nix says (in a terminal, smx shows
+                          only its warnings and errors)
+  --version               Which smudgenix smx comes from
 EOF2
 }
 
@@ -164,7 +335,12 @@ history_of() {
     if [ -n "${first[$path]:-}" ]; then note "same as ${first[$path]}"; else first[$path]=$n; fi
     version=""
     [ "${2:-}" != os ] || version="  NixOS $(cat "$path/nixos-version" 2>/dev/null)"
-    printf '%5s  %s %s%s%s\n' "$n" "$day" "$time" "$version" "${notes:+  ($notes)}"
+    on="" off="" dim=""
+    if [ -t 1 ]; then
+      dim=$D off=$N
+      [ "$n" != "$current" ] || on=$A$B
+    fi
+    printf '%s%5s  %s %s%s%s%s\n' "$on" "$n" "$day" "$time" "$version" "$off" "${notes:+  $dim($notes)$off}"
   done
 }
 
@@ -187,6 +363,11 @@ reboot_pending() {
   [ "$(parts /run/booted-system)" != "$(parts /run/current-system)" ]
 }
 
+# For status: a heading, and lines that need attention (in color, in a
+# terminal).
+heading() { if [ -t 1 ]; then echo "${B}$*${N}"; else echo "$*"; fi; }
+attention() { if [ -t 1 ]; then echo "  ${A}▲${N} $*"; else echo "  $*"; fi; }
+
 # --- Your home ------------------------------------------------------------
 
 home_lock() {
@@ -206,12 +387,18 @@ home_apply() {
   home_lock
   overrides=()
   [ -z "$checkout" ] || overrides=(--override-input system/nixos "path:$checkout")
-  out=$(nix build --no-link --print-out-paths "${overrides[@]}" "${extra[@]}" \
-    "$home_flake#homeConfigurations.\"$USER\".activationPackage")
-  if [ -f "$home_state/home-reverted" ]; then
-    say "leaving the revert to generation $(cat "$home_state/home-reverted")"
+  old=$(readlink -e "$home_profile" || true)
+  build "Building your home" "${overrides[@]}" "${extra[@]}" \
+    "$home_flake#homeConfigurations.\"$USER\".activationPackage"
+  if [ "$built" = "$old" ] && [ ! -f "$home_state/home-reverted" ]; then
+    echo "${G}✓${N} Nothing to change" >&2
+  else
+    if [ -f "$home_state/home-reverted" ]; then
+      say "leaving the revert to generation $(cat "$home_state/home-reverted")"
+    fi
+    step "Switching to it" home_activate "$built"
+    package_changes "$old" "$built" >&2
   fi
-  home_activate "$out"
   rm -f "$home_state/home-reverted"
   snapshot home
 }
@@ -220,24 +407,28 @@ home_update() {
   [ -f "$home_flake/flake.nix" ] || die "no home flake at $(tildify "$home_flake")"
   github_token
   home_lock
-  relock "$home_flake"
+  before=$(cat "$home_flake/flake.lock" 2>/dev/null || echo '{}')
+  step "Getting the latest" relock "$home_flake"
+  lock_changes "$before" "$(cat "$home_flake/flake.lock")" >&2
   home_apply "$@"
 }
 
 home_revert() {
   [ $# -le 1 ] || die "usage: smx revert [<gen>]"
   home_lock
+  old=$(readlink -e "$home_profile")
   path=$(generation_path "$home_profile" "${1:-}")
   n=$(generation_number "$home_profile" "$path")
-  home_activate "$path"
+  step "Going back to generation $n" home_activate "$path"
+  package_changes "$old" "$path" >&2
   echo "$n" > "$home_state/home-reverted"
-  say "reverted to generation $n. Automatic updates wait until you next \`smx update\` or \`smx config apply\`."
+  notice "Automatic updates wait until you next \`smx update\` or \`smx config apply\`."
 }
 
 home_history() { history_of "$home_profile"; }
 
 home_status() {
-  echo "Your home, $(tildify "$home_flake"):"
+  heading "Your home, $(tildify "$home_flake")"
   if [ ! -e "$home_profile" ]; then
     echo "  not applied yet"
   else
@@ -246,16 +437,16 @@ home_status() {
   fi
   echo "  smudgenix $(smudgenix_in "$home_flake/flake.lock")"
   if [ -d "$(applied_dir home)" ] && file_changes home >/dev/null; then
-    echo "  Your config has changes that aren't applied yet: \`smx config diff\`."
+    attention "Your config has changes that aren't applied yet: \`smx config diff\`."
   fi
   if [ -f "$os_flake/flake.lock" ] && [ "$(smudgenix_rev "$home_flake/flake.lock")" != "$(smudgenix_rev "$os_flake/flake.lock")" ]; then
-    echo "  The OS has another smudgenix, $(smudgenix_in "$os_flake/flake.lock"): \`smx update\` to catch up."
+    attention "The OS has another smudgenix, $(smudgenix_in "$os_flake/flake.lock"): \`smx update\` to catch up."
   fi
   if [ -f "$home_state/home-reverted" ]; then
-    echo "  Reverted to generation $(cat "$home_state/home-reverted"); automatic updates wait until you next \`smx update\` or \`smx config apply\`."
+    attention "Reverted to generation $(cat "$home_state/home-reverted"); automatic updates wait until you next \`smx update\` or \`smx config apply\`."
   fi
   if reboot_pending; then
-    echo "  The OS has an update waiting for a reboot."
+    attention "The OS has an update waiting for a reboot."
   fi
 }
 
@@ -273,7 +464,7 @@ as_root() {
   [ "$(id -u)" -ne 0 ] || return 0
   need_admin
   github_token
-  exec sudo --preserve-env=NIX_CONFIG "$0" "${args[@]}"
+  exec sudo --preserve-env=NIX_CONFIG,NO_COLOR "$0" "${args[@]}"
 }
 
 os_apply() {
@@ -281,17 +472,41 @@ os_apply() {
   as_root
   overrides=()
   [ -z "$checkout" ] || overrides=(--override-input nixos "path:$checkout")
-  nixos-rebuild "$when" --flake "$os_flake" "${overrides[@]}" "${extra[@]}"
+  old=$(readlink -e /run/current-system)
+  build "Building the OS" "${overrides[@]}" "${extra[@]}" \
+    "$os_flake#$(config_attr os).config.system.build.toplevel"
+  if [ "$built" = "$old" ] && [ "$built" = "$(readlink -e "$os_profile")" ]; then
+    echo "${G}✓${N} Nothing to change" >&2
+  else
+    case "$when" in
+      switch) label="Switching to it" ;;
+      test) label="Trying it, until the next reboot" ;;
+      boot) label="Setting it up for the next reboot" ;;
+    esac
+    step "$label" nixos-rebuild "$when" --store-path "$built"
+    package_changes "$old" "$built" >&2
+  fi
   if [ "$when" != test ]; then
     rm -f "$os_state/os-reverted"
     snapshot os
+  fi
+  if [ "$when" = boot ] || reboot_pending; then
+    notice "Restart to finish: it has a new kernel or drivers."
   fi
 }
 
 os_update() {
   as_root
-  relock "$os_flake"
+  before=$(cat "$os_flake/flake.lock" 2>/dev/null || echo '{}')
+  step "Getting the latest" relock "$os_flake"
+  lock_changes "$before" "$(cat "$os_flake/flake.lock")" >&2
   os_apply "$@"
+}
+
+# Switch the OS to a generation's store path (for revert).
+os_switch_to() {
+  [ "$2" = test ] || nix-env --profile "$os_profile" --set "$1"
+  "$1/bin/switch-to-configuration" "$2"
 }
 
 os_revert() {
@@ -306,37 +521,40 @@ os_revert() {
   path=$(generation_path "$os_profile" "$gen")
   n=$(generation_number "$os_profile" "$path")
   as_root
-  if [ "$when" != test ]; then
-    nix-env --profile "$os_profile" --set "$path"
-  fi
-  "$path/bin/switch-to-configuration" "$when"
+  old=$(readlink -e /run/current-system)
+  step "Going back to generation $n" os_switch_to "$path" "$when"
+  [ "$when" = boot ] || package_changes "$old" "$path" >&2
   if [ "$when" != test ]; then
     mkdir -p "$os_state"
     echo "$n" > "$os_state/os-reverted"
-    say "reverted to generation $n. Automatic updates wait until the next \`smx os update\` or \`smx os config apply\`."
+    notice "Automatic updates wait until the next \`smx os update\` or \`smx os config apply\`."
   fi
 }
 
 os_history() { history_of "$os_profile" os; }
 
 os_status() {
-  echo "The OS, /etc/nixos ($(cat /proc/sys/kernel/hostname)):"
+  heading "The OS, /etc/nixos ($(cat /proc/sys/kernel/hostname))"
   n=$(current_generation "$os_profile")
   echo "  generation $n, applied $(link_date "$os_profile-$n-link"), NixOS $(cat /run/current-system/nixos-version)"
   echo "  smudgenix $(smudgenix_in "$os_flake/flake.lock")"
   if [ -d "$(applied_dir os)" ] && file_changes os >/dev/null; then
-    echo "  The config has changes that aren't applied yet: \`smx os config diff\`."
+    attention "The config has changes that aren't applied yet: \`smx os config diff\`."
   fi
   if reboot_pending; then
-    echo "  An update is waiting for a reboot (a new kernel or drivers)."
+    attention "An update is waiting for a reboot (a new kernel or drivers)."
   fi
   if [ -f "$os_state/os-reverted" ]; then
-    echo "  Reverted to generation $(cat "$os_state/os-reverted"); automatic updates wait until the next \`smx os update\` or \`smx os config apply\`."
+    attention "Reverted to generation $(cat "$os_state/os-reverted"); automatic updates wait until the next \`smx os update\` or \`smx os config apply\`."
   fi
   last=$(systemctl show nixos-upgrade.service -p ExecMainExitTimestamp --value 2>/dev/null || true)
   if [ -n "$last" ] && [ "$last" != "n/a" ]; then
     result=$(systemctl show nixos-upgrade.service -p Result --value)
-    echo "  Last automatic update: $last, $([ "$result" = success ] && echo "succeeded" || echo "failed (see \`journalctl -u nixos-upgrade\`)")"
+    if [ "$result" = success ]; then
+      echo "  Last automatic update: $last, succeeded"
+    else
+      attention "Last automatic update: $last, failed (see \`journalctl -u nixos-upgrade\`)"
+    fi
   fi
   next=$(systemctl show nixos-upgrade.timer -p NextElapseUSecRealtime --value 2>/dev/null || true)
   [ -z "$next" ] || [ "$next" = "n/a" ] || echo "  Next automatic update: $next"
@@ -555,15 +773,13 @@ config_unset() {
 
 # Whether this config builds, after an edit.
 config_check() {
-  say "checking…"
   if [ "$1" = os ]; then
-    ask os '{ path = [ "settingsFile" ]; } // { _ = c.config.system.build.toplevel.drvPath; }' >/dev/null 2>&1 || true
     target="$(flake_of os)#$(config_attr os).config.system.build.toplevel.drvPath"
   else
     target="$(flake_of home)#$(config_attr home).activationPackage.drvPath"
   fi
-  if ! err=$(nix eval --raw "$target" 2>&1 >/dev/null); then
-    echo "$err" | grep -v '^warning:' | tail -15 >&2
+  # (In a subshell, so a failure comes back here, for the hint.)
+  if ! (step "Checking it" nix eval --raw "$target"); then
     die "that doesn't work yet; fix it with \`$(prefix_of "$1") config edit\`"
   fi
 }
@@ -609,11 +825,13 @@ snapshot() {
 # The changes to the config files since the last apply (none: fails).
 file_changes() {
   dir=$(applied_dir "$1") changed=1
+  diff_color=()
+  [ -z "$fancy" ] || diff_color=(--color=always)
   for f in flake.nix smudgenix.toml; do
     a="$dir/$f" b="$(flake_of "$1")/$f"
     [ -e "$a" ] || a=/dev/null
     [ -e "$b" ] || b=/dev/null
-    diff -u --label "$f (applied)" --label "$f" "$a" "$b" && continue
+    diff -u "${diff_color[@]}" --label "$f (applied)" --label "$f" "$a" "$b" && continue
     changed=0
   done
   return $changed
@@ -632,14 +850,13 @@ config_diff() {
   else
     say "there's no record of what was applied last (one's kept from the next apply)"
   fi
-  say "building, to compare packages…"
   if [ "$scope" = os ]; then
-    new=$(nix build --no-link --print-out-paths "$os_flake#$(config_attr os).config.system.build.toplevel")
+    build "Building, to compare" "$os_flake#$(config_attr os).config.system.build.toplevel"
   else
-    new=$(nix build --no-link --print-out-paths "$home_flake#$(config_attr home).activationPackage")
+    build "Building, to compare" "$home_flake#$(config_attr home).activationPackage"
   fi
-  changes=$(nix store diff-closures "$current" "$new")
-  if [ -n "$changes" ]; then echo "$changes"; else echo "No package changes."; fi
+  package_changes "$current" "$built"
+  [ "$current" != "$built" ] || echo "  ${D}No package changes.${N}"
 }
 
 config_reset() {
@@ -677,7 +894,7 @@ config_browse() {
     return
   fi
   list=$(mktemp)
-  trap 'rm -f "$list"' EXIT
+  trap 'rm -f "$list"; printf "\033[?25h" >&2' EXIT
   changed=""
   # (Each change runs as its own smx, so a mistake stops just that change.)
   self=("$0")
@@ -688,7 +905,9 @@ config_browse() {
     # shellcheck disable=SC2016
     key=$(jq -r '.[] | "\(.key)\t\(.value | if . == null then "(unset)" elif type == "string" then . else tojson end | .[0:60])\t\(if .origin == "default" then "" else .origin end)"' "$list" \
       | awk -F'\t' '{ printf "%-36s %-62s %s\n", $1, $2, $3 }' \
-      | fzf --no-sort --reverse --prompt "$(prefix_of "$scope") config> " \
+      | fzf --no-sort --reverse \
+          --color "bg+:$color_raised,fg+:$color_bright,hl:$color_accent,hl+:$color_accent,pointer:$color_accent,prompt:$color_accent,info:$color_dim,header:$color_dim,border:$color_dim" \
+          --prompt "$(prefix_of "$scope") config> " \
           --header "Enter: change   Esc: done" \
           --preview "jq -r --arg k {1} '.[] | select(.key == \$k) | \"\(.key)\n\n\(.description)\nType: \(.type)\nDefault: \(.default)\nValue: \(.value | tojson)\nFrom: \(.origin)\"' $list" \
           --preview-window down,40%,wrap \
@@ -706,11 +925,6 @@ config_browse() {
   if [ -n "$changed" ] && confirm "Apply the changes now?"; then
     config_apply_now
   fi
-}
-
-confirm() {
-  read -r -p "$1 [y/N] " answer
-  case "$answer" in y|Y|yes) return 0 ;; *) return 1 ;; esac
 }
 
 config_apply_now() { "${scope}_apply"; }
@@ -772,10 +986,16 @@ run_pkg() {
 
 search_pkgs() {
   [ $# -ge 1 ] || die "usage: smx search <words>"
-  [ ! -t 1 ] || say "searching (the first search after an update takes a while)…"
-  nix search nixpkgs "$@" --json \
-    | jq -r 'to_entries[] | (.key | sub("^legacyPackages\\.[^.]+\\."; "")) as $name
-        | "\($name) \(.value.version)\(if .value.description != "" then "\n    \(.value.description)" else "" end)"'
+  if [ -n "$fancy" ] && [ -z "$verbose" ]; then
+    step "Searching nixpkgs" nix search nixpkgs "$@" --json
+    results=$(cat "$step_out")
+  else
+    results=$(nix search nixpkgs "$@" --json)
+  fi
+  b="" n="" d=""
+  [ ! -t 1 ] || b=$B n=$N d=$D
+  jq -r 'to_entries[] | (.key | sub("^legacyPackages\\.[^.]+\\."; "")) as $name
+        | "\($B)\($name)\($N) \($D)\(.value.version)\($N)\(if .value.description != "" then "\n    \(.value.description)" else "" end)"' --arg B "$b" --arg N "$n" --arg D "$d" <<<"$results"
 }
 
 # Generations of profile $1 that `clean` with age $2 (like 14d) deletes:
@@ -817,11 +1037,13 @@ clean() {
     # (Confirmed already: as root, it goes ahead.)
     args+=(-f)
     as_root
-    nix-collect-garbage --delete-older-than "$age"
+  fi
+  step "Cleaning up" nix-collect-garbage --delete-older-than "$age"
+  freed=$(grep -h "freed" "$step_out" "$step_log" 2>/dev/null | tail -1 || true)
+  [ -z "$freed" ] || echo "  ${D}$freed${N}" >&2
+  if [ "$scope" = os ]; then
     # (And drop them from the boot menu.)
-    "$os_profile/bin/switch-to-configuration" boot
-  else
-    nix-collect-garbage --delete-older-than "$age"
+    step "Updating the boot menu" "$os_profile/bin/switch-to-configuration" boot
   fi
 }
 
@@ -852,6 +1074,11 @@ env_shell() {
 
 # --- Commands -------------------------------------------------------------
 
+# Which smudgenix this smx comes with (the OS's).
+version() {
+  echo "smx, from smudgenix $(smudgenix_in "$os_flake/flake.lock")"
+}
+
 os_command() {
   case "${1:-}" in
     "") os_usage; echo; os_status ;;
@@ -867,8 +1094,22 @@ os_command() {
   esac
 }
 
+# Options for any command (except run and shell, which pass them on):
+# --verbose shows everything Nix says.
+case "${1:-}" in
+  run|shell) ;;
+  *)
+    rest=()
+    for a in "$@"; do
+      if [ "$a" = --verbose ]; then verbose=1; else rest+=("$a"); fi
+    done
+    set -- "${rest[@]}"
+    ;;
+esac
+
 case "${1:-}" in
   "") usage; echo; home_status ;;
+  --version) version ;;
   status) home_status ;;
   update) shift; home_update "$@" ;;
   config) shift; config_command home "$@" ;;

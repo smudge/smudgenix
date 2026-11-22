@@ -105,6 +105,11 @@ against their types, and they win over the same options set in `flake.nix`.
 For anything else, `config edit --nix` edits `flake.nix` itself, and checks
 it before applying. `config reset` puts both back as they were last applied.
 
+In a terminal, smx shows each step on one line (and builds with
+nix-output-monitor), keeping Nix's own output in
+`~/.local/state/smudgenix/logs/` unless it warns or fails; `--verbose`
+shows all of it. After applying, it lists the packages that changed.
+
 Updates use your `gh` login, if any, to avoid GitHub rate limits.
 
 For local iteration, `config apply --local <checkout>` uses a smudgenix
