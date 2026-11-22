@@ -36,6 +36,11 @@ let
 
     # Apps
     "Mod+Return" = open "Open a Terminal" apps.terminal;
+    # (tmux-snap comes from smudgenix's home config.)
+    "Mod+Shift+Return" = {
+      action = spawnSh "exec ${lib.getExe apps.terminal} -e sh -c 'command -v tmux-snap >/dev/null && exec tmux-snap reopen; exec \"$SHELL\"'";
+      hotkey-overlay-title = "Reopen a Closed Terminal";
+    };
     "Mod+B" = open "Open the Browser" apps.browser;
     "Mod+E" = open "Open the File Manager" apps.fileManager;
 
