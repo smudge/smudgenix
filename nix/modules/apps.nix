@@ -8,12 +8,23 @@ lib.mkIf config.smudgenix.apps.enable {
     obsidian
   ];
 
-  # (Colors & font family come from ./theme.nix.) No custom keybinds: Super
-  # belongs to the window manager, Ctrl+hjkl to tmux/nvim, and alacritty's
-  # defaults cover the rest (Ctrl+Shift+C/V, Ctrl+=/-/0).
+  # (Colors & font family come from ./theme.nix.) Super belongs to the window
+  # manager and Ctrl/Alt to tmux (./tmux.nix); alacritty's own defaults cover
+  # the rest (Ctrl+Shift+C/V, Ctrl+=/-/0).
   programs.alacritty = {
     enable = true;
-    settings = {
+    settings = let
+      # Most terminals can't tell Ctrl+Shift+<letter> from Ctrl+<letter>, so
+      # send Ctrl+Shift+hjkl as Alt+Shift+arrows (tmux: move the pane).
+      esc = builtins.fromJSON ''"\u001b"'';
+      altShiftArrow = key: arrow: { inherit key; mods = "Control|Shift"; chars = "${esc}[1;4${arrow}"; };
+    in {
+      keyboard.bindings = [
+        (altShiftArrow "H" "D")
+        (altShiftArrow "J" "B")
+        (altShiftArrow "K" "A")
+        (altShiftArrow "L" "C")
+      ];
       font = {
         size = 14;
         offset.x = -1;

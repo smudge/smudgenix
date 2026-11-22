@@ -54,6 +54,24 @@ in
       bind l select-pane -R
       bind -n C-S-Left previous-window
       bind -n C-S-Right next-window
+
+      # Split side-by-side (Alt+d) or stacked (Alt+Shift+d), in the same dir.
+      bind -n M-d split-window -h -c "#{pane_current_path}"
+      bind -n M-D split-window -v -c "#{pane_current_path}"
+
+      # Ctrl+hjkl focuses panes (and nvim splits, via vim-tmux-navigator);
+      # Alt+arrows does the same.
+      bind -n M-Left select-pane -L
+      bind -n M-Down select-pane -D
+      bind -n M-Up select-pane -U
+      bind -n M-Right select-pane -R
+
+      # Alt+Shift+arrows (and Ctrl+Shift+hjkl, which alacritty translates)
+      # moves the pane, stopping at the window's edge.
+      bind -n M-S-Left if -F "#{pane_at_left}" "" 'swap-pane -d -t "{left-of}"'
+      bind -n M-S-Down if -F "#{pane_at_bottom}" "" 'swap-pane -d -t "{down-of}"'
+      bind -n M-S-Up if -F "#{pane_at_top}" "" 'swap-pane -d -t "{up-of}"'
+      bind -n M-S-Right if -F "#{pane_at_right}" "" 'swap-pane -d -t "{right-of}"'
     '';
   };
 }
