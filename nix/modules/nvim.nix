@@ -79,8 +79,7 @@
       }
     ];
 
-    # Theme
-    colorschemes.onedark.enable = true;
+    # (The colorscheme is set in ./theme.nix.)
     plugins.web-devicons.enable = true;
 
     # GUI

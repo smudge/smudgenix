@@ -11,6 +11,7 @@
     ./ai.nix
     ./apps.nix
     ./noctalia.nix
+    ./theme.nix
   ];
 
   options.smudgenix = {
