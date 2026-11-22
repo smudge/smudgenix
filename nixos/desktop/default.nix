@@ -12,6 +12,7 @@ in
   imports = [
     ./apps.nix
     ./binds.nix
+    ./firefox.nix
     ./niri.nix
     ./noctalia.nix
     (removed "gnome")
