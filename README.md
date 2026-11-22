@@ -28,8 +28,8 @@ from the `smudgenix.user.homeTemplate` template (default:
 overwrites anything; edit that file for per-home overrides. Its git identity is
 pre-filled from `smudgenix.user.git` if set; otherwise you are notified to fill
 it in, and it is applied on the next daily update. The generated flake
-follows the system's nixpkgs (via `/etc/nixos/flake.lock`), so home and system
-share one nixpkgs.
+follows the system's smudgenix (via `/etc/nixos/flake.lock`), so home and
+system share one smudgenix and nixpkgs, and update in lockstep.
 
 Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 `nix-shell -p`) resolves to the system's flake-pinned nixpkgs.

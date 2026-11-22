@@ -80,14 +80,17 @@ in
         mkdir -p "$HOME/.config/home-manager"
         cd "$HOME/.config/home-manager"
         nix flake init -t '${cfg.homeTemplate}'
-        # Fill in the placeholders, and follow the system's pinned nixpkgs (so
-        # home and system share one nixpkgs, in lockstep).
+        # Fill in the placeholders, and follow the system's smudgenix (so home
+        # and system share one smudgenix & nixpkgs, in lockstep).
         sed -i \
           -e "s|@username@|$USER|g" \
           -e 's|@system@|${system}|g' \
           -e 's|@stateVersion@|${config.system.nixos.release}|g'${fillGit} \
-          -e 's|^\( *\)# \(system\.url = "path:/etc/nixos";\)|\1\2|' \
-          -e 's|^\( *\)# \(smudgenix\.inputs\.nixpkgs\.follows = "system/nixos/nixpkgs";\)|\1\2|' \
+          -e '/^ *smudgenix\.url = /,/^ *# smudgenix\.follows = /c\
+            # Follow the system smudgenix (and its nixpkgs), so home and\
+            # system update in lockstep:\
+            system.url = "path:/etc/nixos";\
+            smudgenix.follows = "system/nixos";' \
           flake.nix
         ${activate}
       '';

@@ -19,10 +19,11 @@
   inputs = {
     smudgenix.url = "github:smudge/smudgenix";
 
-    # Optional: on a smudgenix NixOS host, share the system's pinned nixpkgs
-    # (from /etc/nixos/flake.lock) instead of locking a separate one:
+    # On a smudgenix NixOS host, replace `smudgenix.url` with these to follow
+    # the system's smudgenix (and its nixpkgs) from /etc/nixos/flake.lock, so
+    # home and system update in lockstep:
     # system.url = "path:/etc/nixos";
-    # smudgenix.inputs.nixpkgs.follows = "system/nixos/nixpkgs";
+    # smudgenix.follows = "system/nixos";
   };
 
   outputs = { smudgenix, ... }: {
