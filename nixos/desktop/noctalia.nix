@@ -101,7 +101,11 @@ let
       reserve_space = false;
     };
 
+    # A wide control center, without its sidebar.
     control_center = {
+      width = 1000;
+      sidebar = "none";
+      sidebar_section = "none";
       hidden_tabs = [ "calendar" "weather" "screen-time" ];
       calendar.show_events_card = false;
       media.show_visualizer = false;
@@ -119,9 +123,9 @@ let
       layer = "auto";
       smart_auto_hide = true;
       reserve_space = false;
-      start = [ "launcher" "wallpaper" "workspaces" "media" ];
-      center = [ "clock" ];
-      end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "clipboard" "notifications" "control-center" "session" ];
+      start = [ "launcher" "workspaces" "clipboard" "media" ];
+      center = [ "clock" "control-center" ];
+      end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
     };
 
     # Icons only, and a short date & time.
