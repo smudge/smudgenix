@@ -31,6 +31,9 @@ let
         touchpad {
             tap
             natural-scroll
+            // Two-finger click to right-click, rather than the bottom-right
+            // corner (as GNOME does). Touchpads with buttons keep them.
+            click-method "clickfinger"
         }
     }
 
