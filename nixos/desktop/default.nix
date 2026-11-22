@@ -67,7 +67,6 @@ in
     }];
 
     # Use libsecret and launch gnome-keyring at startup.
-    programs.seahorse.enable = true;
     services.gnome.gnome-keyring.enable = true;
     security.pam.services.gdm.enableGnomeKeyring = true;
 
