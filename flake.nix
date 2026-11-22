@@ -6,6 +6,7 @@
 #   ├─ ./nix          (userland home-manager config, for any Nix-enabled home)
 #   │   ├─ default.nix
 #   │   └─ modules/
+#   ├─ ./theme        (smudge: palette, fonts & wallpaper, for both)
 #   ├─ ./checks       (example host & home, built by `nix flake check`)
 #   └─ ./template
 #       ├─ nixos/     (per-host, uncommitted /etc/nixos flake)
