@@ -74,6 +74,7 @@ let
 
     lockscreen = {
       transition = [ "fade" ];
+      transition_duration = 500;
       # Unlock with a fingerprint, where there's a reader. (Noctalia reads it
       # itself, not via PAM: the login PAM service is password-only.)
       fingerprint = config.services.fprintd.enable;
@@ -82,6 +83,22 @@ let
     idle.behavior = {
       lock = { enabled = true; timeout = 600; };
       screen-off = { enabled = true; timeout = 900; };
+    };
+
+    # Warmer, dimmer evenings. (Offline, so the day's times are fixed; hosts
+    # elsewhere can set their own `location.sunrise`/`sunset`.)
+    nightlight.enabled = true;
+    brightness.enable_scheduled_brightness = true;
+    location = { custom_schedule = true; sunrise = "06:00"; sunset = "20:30"; };
+
+    weather.enabled = false;
+    desktop_widgets.enabled = false;
+
+    # A dock, out of the way until it's needed.
+    dock = {
+      enabled = true;
+      smart_auto_hide = true;
+      reserve_space = false;
     };
 
     control_center = {
