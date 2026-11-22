@@ -106,7 +106,7 @@ let
 in
 {
   options.smudgenix.desktop.niri = {
-    enable = lib.mkEnableOption "the niri (scrollable-tiling) desktop session";
+    enable = lib.mkEnableOption "the desktop: niri (scrollable tiling), with the Noctalia shell" // { default = true; };
     extraConfig = lib.mkOption {
       type = lib.types.lines;
       default = "";
@@ -136,13 +136,6 @@ in
       wiremix
     ];
 
-    # GNOME enables IBus (input methods), whose autostart entry runs it
-    # outside GNOME too, where it just warns that it should be started by
-    # the compositor. niri doesn't need it, so skip it there.
-    systemd.user.units."app-ibus\\x2ddaemon@autostart.service" = {
-      overrideStrategy = "asDropin";
-      text = "[Unit]\nConditionEnvironment=!XDG_CURRENT_DESKTOP=niri\n";
-    };
   })
 
   (lib.mkIf (cfg.enable && apps.filePicker == "yazi") {

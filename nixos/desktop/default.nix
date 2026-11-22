@@ -1,56 +1,37 @@
-# The graphical desktop: sessions (GNOME and friends), the display manager,
-# and machine-wide desktop defaults. Configured per-host via
+# The graphical desktop: niri with the Noctalia shell (and its greeter), the
+# default apps, and machine-wide desktop defaults. Configured per-host via
 # `smudgenix.desktop.*` and `smudgenix.apps.*`.
 { config, lib, pkgs, ... }:
 
 let
-  inherit (config.smudgenix) desktop;
   theme = import ../../theme pkgs;
+  removed = name: lib.mkRemovedOptionModule [ "smudgenix" "desktop" name ]
+    "smudgenix no longer includes GNOME; niri (`smudgenix.desktop.niri`) is the desktop.";
 in
 {
   imports = [
     ./apps.nix
     ./binds.nix
-    ./gnome.nix
     ./niri.nix
     ./noctalia.nix
+    (removed "gnome")
+    (removed "defaultSession")
   ];
 
-  options.smudgenix = {
-    desktop = {
-      gnome.enable = lib.mkEnableOption "the GNOME desktop session" // { default = true; };
-
-      defaultSession = lib.mkOption {
-        type = lib.types.enum [ "gnome" "niri" ];
-        default = if desktop.gnome.enable then "gnome" else "niri";
-        defaultText = lib.literalExpression ''if gnome.enable then "gnome" else "niri"'';
-        description = "Session preselected at login (users can still pick another).";
-      };
-
-      keyRepeat = {
-        delay = lib.mkOption {
-          type = lib.types.ints.positive;
-          default = 200;
-          description = "Milliseconds a key is held before it starts repeating.";
-        };
-        rate = lib.mkOption {
-          type = lib.types.ints.positive;
-          default = 40;
-          description = "Key repeats per second.";
-        };
-      };
+  options.smudgenix.desktop.keyRepeat = {
+    delay = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 200;
+      description = "Milliseconds a key is held before it starts repeating.";
+    };
+    rate = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 40;
+      description = "Key repeats per second.";
     };
   };
 
-  config = {
-    assertions = [{
-      assertion = desktop.${desktop.defaultSession}.enable;
-      message = "smudgenix: `desktop.defaultSession` (\"${desktop.defaultSession}\") must be enabled.";
-    }];
-
-    services.displayManager.defaultSession = desktop.defaultSession;
-    services.displayManager.gdm.enable = true;
-
+  config = lib.mkIf config.smudgenix.desktop.niri.enable {
     # Hint to electron apps that they should use Wayland
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
 
@@ -68,29 +49,24 @@ in
       monospace = [ theme.fonts.mono.name ];
     };
 
-    # Machine-wide defaults for GTK apps & GNOME. Users can still change them
-    # (in GNOME Settings, or via home-manager's `dconf.settings`).
+    # Machine-wide defaults for GTK apps (which read them from dconf, or via
+    # the desktop portal). Users can still change them, via home-manager's
+    # `dconf.settings`.
     programs.dconf.enable = true;
     programs.dconf.profiles.user.databases = [{
-      settings = {
-        "org/gnome/desktop/interface" = {
-          color-scheme = "prefer-dark";
-          gtk-theme = "Adwaita-dark";
-          accent-color = "orange"; # the closest to smudge's ember
-          font-name = "${theme.fonts.sans.name} 11";
-          document-font-name = "${theme.fonts.sans.name} 11";
-          monospace-font-name = "${theme.fonts.mono.name} 11";
-        };
-        "org/gnome/desktop/peripherals/keyboard" = {
-          delay = lib.gvariant.mkUint32 desktop.keyRepeat.delay;
-          repeat-interval = lib.gvariant.mkUint32 (1000 / desktop.keyRepeat.rate);
-        };
+      settings."org/gnome/desktop/interface" = {
+        color-scheme = "prefer-dark";
+        gtk-theme = "Adwaita-dark";
+        accent-color = "orange"; # the closest to smudge's ember
+        font-name = "${theme.fonts.sans.name} 11";
+        document-font-name = "${theme.fonts.sans.name} 11";
+        monospace-font-name = "${theme.fonts.mono.name} 11";
       };
     }];
 
     # Use libsecret and launch gnome-keyring at startup.
     services.gnome.gnome-keyring.enable = true;
-    security.pam.services.gdm.enableGnomeKeyring = true;
+    security.pam.services.greetd.enableGnomeKeyring = true;
 
     # GTK themes & libsecret:
     environment.systemPackages = [

@@ -61,7 +61,7 @@ in
     };
   };
 
-  config = {
+  config = lib.mkIf config.smudgenix.desktop.niri.enable {
     smudgenix.apps.entries = lib.mapAttrs (_: pkg: "${pkg}/share/applications/${desktopEntry pkg}") apps;
 
     smudgenix.apps.desktopEntries = lib.mapAttrs (_: lib.mkDefault) {

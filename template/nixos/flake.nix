@@ -40,11 +40,9 @@
             hiDPI = false;
             gaming = false;
             desktop = {
-              gnome.enable = true;
-              # niri (scrollable tiling) with the Noctalia shell, alongside or
-              # instead of GNOME:
-              niri.enable = false;
-              # defaultSession = "niri";
+              # niri (scrollable tiling) with the Noctalia shell; turn off for
+              # a machine without a desktop:
+              # niri.enable = true;
               # keyRepeat = { delay = 200; rate = 40; };
               # binds."Mod+T" = ''spawn "alacritty"'';
               # noctalia.settings.bar.default.position = "bottom";

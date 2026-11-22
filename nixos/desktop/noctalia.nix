@@ -1,7 +1,8 @@
 # Noctalia, the desktop shell (bar, launcher, notifications, OSDs, lock
 # screen, idle, polkit agent, ...) for tiling sessions. It runs only inside
 # niri, from a read-only config dir generated (and validated) here. Settings
-# changed in its GUI are kept per-user in ~/.local/state/noctalia.
+# changed in its GUI are kept per-user in ~/.local/state/noctalia. Also its
+# greeter, the login screen (on greetd).
 { config, lib, pkgs, ... }:
 
 let
@@ -112,6 +113,29 @@ let
     };
   };
 
+  # The login screen, in the same look. (All set here, so nothing syncs it
+  # from the shell at runtime.)
+  greeter = with palette.dark; {
+    session.default = "niri";
+    user.default = config.smudgenix.user.name;
+    appearance = {
+      scheme = "Synced";
+      theme_mode = "dark";
+      font_family = theme.fonts.sans.name;
+      inherit (defaults.shell) corner_radius_scale;
+      hide_logo = true;
+      scheme_selector_position = "hidden";
+      palette = {
+        inherit primary on_primary secondary on_secondary tertiary on_tertiary error on_error;
+        inherit surface on_surface on_surface_variant shadow hover on_hover;
+        surface_variant = surface_container;
+        outline = outline_variant;
+      };
+      wallpaper = { path = "${theme.wallpaper}"; fill_mode = "crop"; };
+    };
+    clock = { time_format = "%-I:%M"; date_format = "%A, %B %-d"; };
+  };
+
   configDir = pkgs.runCommand "noctalia-config" { } ''
     # (Noctalia reads $NOCTALIA_CONFIG_HOME/noctalia/.)
     mkdir -p $out/noctalia/palettes
@@ -143,7 +167,14 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkMerge [ (lib.mkIf desktop.niri.enable {
+    services.displayManager.noctalia-greeter = {
+      enable = true;
+      settings = lib.mapAttrsRecursive (_: lib.mkDefault) greeter;
+    };
+  })
+
+  (lib.mkIf cfg.enable {
     assertions = [{
       assertion = desktop.niri.enable;
       message = "smudgenix: `desktop.noctalia` needs `desktop.niri.enable`.";
@@ -170,5 +201,5 @@ in
       "Mod+N" = msg [ "panel-toggle" "control-center" ];
       "Super+Alt+L" = msg [ "session" "lock" ] // { hotkey-overlay-title = "Lock the Screen"; };
     };
-  };
+  }) ];
 }
