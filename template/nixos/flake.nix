@@ -44,6 +44,7 @@
               # a machine without a desktop:
               # niri.enable = true;
               # keyRepeat = { delay = 200; rate = 40; };
+              # touchpad.tapToClick = true;
               # binds."Mod+T" = ''spawn "alacritty"'';
               # noctalia.settings.bar.default.position = "bottom";
             };

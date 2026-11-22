@@ -29,7 +29,8 @@ let
             repeat-rate ${toString desktop.keyRepeat.rate}
         }
         touchpad {
-            tap
+            // Click by pressing down, unless `touchpad.tapToClick`.
+            ${lib.optionalString desktop.touchpad.tapToClick "tap"}
             natural-scroll
             // Two-finger click to right-click, rather than the bottom-right
             // corner (as GNOME does). Touchpads with buttons keep them.

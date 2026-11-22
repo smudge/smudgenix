@@ -32,6 +32,15 @@ in
     };
   };
 
+  options.smudgenix.desktop.touchpad.tapToClick = lib.mkOption {
+    type = lib.types.bool;
+    default = false;
+    description = ''
+      Click by tapping the touchpad. Off by default, so a click takes
+      pressing it down.
+    '';
+  };
+
   config = lib.mkIf config.smudgenix.desktop.niri.enable {
     # Hint to electron apps that they should use Wayland
     environment.sessionVariables.NIXOS_OZONE_WL = "1";
