@@ -4,8 +4,11 @@
 { nixpkgs }:
 
 let
+  settingsModule = import ../settings.nix { inherit (nixpkgs) lib; };
+
   module = {
     imports = [
+      settingsModule.module
       ./user.nix
       ./boot.nix
       ./core.nix
@@ -25,8 +28,12 @@ in
   inherit module;
 
   mkSystem = {
+    # The host's smudgenix.toml (written by `smx os config`), if any.
+    settings ? null,
     modules ? [],
   }: nixpkgs.lib.nixosSystem {
-    modules = [ module ] ++ modules;
+    modules = [ module ]
+      ++ nixpkgs.lib.optional (settings != null) (settingsModule.fromFile settings)
+      ++ modules;
   };
 }

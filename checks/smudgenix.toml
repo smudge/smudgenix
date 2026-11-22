@@ -1,0 +1,3 @@
+# An example of the settings `smx os config set` writes.
+[desktop.touchpad]
+tapToClick = true

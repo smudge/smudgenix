@@ -3,8 +3,11 @@
 { inputs, nixpkgs }:
 
 let
+  settingsModule = import ../settings.nix { inherit (nixpkgs) lib; };
+
   homeModule = {
     imports = [
+      settingsModule.module
       inputs.nixvim.homeModules.nixvim
       ./modules
     ];
@@ -22,6 +25,8 @@ in
     # it after setup.
     stateVersion,
     homeDirectory ? null,
+    # The home's smudgenix.toml (written by `smx config`), if any.
+    settings ? null,
     modules ? [],
   }: let
     pkgs = import nixpkgs {
@@ -40,6 +45,8 @@ in
           if homeDirectory != null then homeDirectory else defaultHome;
         home.stateVersion = stateVersion;
       }
-    ] ++ modules;
+    ]
+      ++ nixpkgs.lib.optional (settings != null) (settingsModule.fromFile settings)
+      ++ modules;
   };
 }

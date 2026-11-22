@@ -19,15 +19,30 @@ die() { say "$*"; exit 1; }
 
 tildify() { case "$1" in "$HOME"/*) echo "~${1#"$HOME"}" ;; *) echo "$1" ;; esac; }
 
+# The config commands, the same for your home and the OS.
+config_usage() {
+  cat <<EOF2
+  config                  Browse the settings, and change them
+  config list [--all]     The settings changed here (or all, with their values)
+  config get <key>        A setting's value
+  config set <key> <value> [--apply]
+  config unset <key>      Back to the default
+  config edit [--nix]     Edit smudgenix.toml (or, with --nix, flake.nix)
+  config diff             What \`config apply\` would change
+  config reset            Discard the changes since the last apply
+EOF2
+}
+
 usage() {
-  cat <<EOF
+  cat <<EOF2
 Usage: smx <command> [args]
 
 Your home ($(tildify "$home_flake")):
   status                  Show your home's status
   update                  Get the latest, and apply it
-  config apply            Apply your config's changes (without updating);
-                          --local <checkout> uses that smudgenix instead
+$(config_usage)
+  config apply            Apply the changes (without updating); --local
+                          <checkout> uses that smudgenix instead
   history                 List your home's generations
   revert [<gen>]          Go back to the previous generation, or to <gen>
 
@@ -38,19 +53,20 @@ Tools:
   env [<shell> [-f]]      Write a .envrc using a devShell from $(tildify "$devshells"),
                           or list them
   help                    Show this help
-EOF
+EOF2
 }
 
 os_usage() {
-  cat <<EOF
+  cat <<EOF2
 Usage: smx os <command> [args]
 
 The OS (/etc/nixos), shared by every user. Changing it takes sudo.
 
   status                  Show the OS's status
   update [when]           Get the latest, and apply it
-  config apply [when]     Apply the config's changes (without updating);
-                          --local <checkout> uses that smudgenix instead
+$(config_usage)
+  config apply [when]     Apply the changes (without updating); --local
+                          <checkout> uses that smudgenix instead
   history                 List the OS's generations
   revert [<gen>] [when]   Go back to the previous generation, or to <gen>
   upgrade                 Move to the next smudgenix release
@@ -58,8 +74,9 @@ The OS (/etc/nixos), shared by every user. Changing it takes sudo.
 [when] is when it takes effect: now and for good (by default), or
   --try                   now, until the next reboot
   --on-reboot             at the next reboot, and for good
-EOF
+EOF2
 }
+
 
 # --- Shared helpers -------------------------------------------------------
 
@@ -188,6 +205,7 @@ home_apply() {
   fi
   home_activate "$out"
   rm -f "$home_state/home-reverted"
+  snapshot home
 }
 
 home_update() {
@@ -219,6 +237,9 @@ home_status() {
     echo "  generation $n, applied $(link_date "$home_profile-$n-link")"
   fi
   echo "  smudgenix $(smudgenix_in "$home_flake/flake.lock")"
+  if [ -d "$(applied_dir home)" ] && file_changes home >/dev/null; then
+    echo "  Your config has changes that aren't applied yet: \`smx config diff\`."
+  fi
   if [ -f "$os_flake/flake.lock" ] && [ "$(smudgenix_rev "$home_flake/flake.lock")" != "$(smudgenix_rev "$os_flake/flake.lock")" ]; then
     echo "  The OS has another smudgenix, $(smudgenix_in "$os_flake/flake.lock"): \`smx update\` to catch up."
   fi
@@ -232,11 +253,17 @@ home_status() {
 
 # --- The OS ---------------------------------------------------------------
 
-# Re-run this command as root (it changes the OS). Only admins can.
-as_root() {
+# Only admins (members of wheel) can change the OS.
+need_admin() {
   [ "$(id -u)" -ne 0 ] || return 0
   id -nG | tr ' ' '\n' | grep -qx wheel \
     || die "changing the OS takes an admin (a member of wheel); ask one to run \`smx ${args[*]}\`"
+}
+
+# Re-run this command as root (it changes the OS).
+as_root() {
+  [ "$(id -u)" -ne 0 ] || return 0
+  need_admin
   github_token
   exec sudo --preserve-env=NIX_CONFIG "$0" "${args[@]}"
 }
@@ -247,7 +274,10 @@ os_apply() {
   overrides=()
   [ -z "$checkout" ] || overrides=(--override-input nixos "path:$checkout")
   nixos-rebuild "$when" --flake "$os_flake" "${overrides[@]}" "${extra[@]}"
-  [ "$when" = test ] || rm -f "$os_state/os-reverted"
+  if [ "$when" != test ]; then
+    rm -f "$os_state/os-reverted"
+    snapshot os
+  fi
 }
 
 os_update() {
@@ -286,6 +316,9 @@ os_status() {
   n=$(current_generation "$os_profile")
   echo "  generation $n, applied $(link_date "$os_profile-$n-link"), NixOS $(cat /run/current-system/nixos-version)"
   echo "  smudgenix $(smudgenix_in "$os_flake/flake.lock")"
+  if [ -d "$(applied_dir os)" ] && file_changes os >/dev/null; then
+    echo "  The config has changes that aren't applied yet: \`smx os config diff\`."
+  fi
   if reboot_pending; then
     echo "  An update is waiting for a reboot (a new kernel or drivers)."
   fi
@@ -303,6 +336,377 @@ os_status() {
 
 os_upgrade() {
   echo "smudgenix has no releases to upgrade between yet: \`smx os update\` gets the latest."
+}
+
+# --- Config: smudgenix.toml, next to each flake ----------------------------
+#
+# Each command takes a scope, "home" or "os", first.
+
+flake_of() { if [ "$1" = os ]; then echo "$os_flake"; else echo "$home_flake"; fi; }
+state_of() { if [ "$1" = os ]; then echo "$os_state"; else echo "$home_state"; fi; }
+prefix_of() { if [ "$1" = os ]; then echo "smx os"; else echo "smx"; fi; }
+settings_of() { echo "$(flake_of "$1")/smudgenix.toml"; }
+
+# The flake attribute of this scope's config (worked out once per run).
+config_attr() {
+  if [ -n "${config_attr_cache:-}" ]; then echo "$config_attr_cache"; return; fi
+  if [ "$1" = home ]; then
+    echo "homeConfigurations.\"$USER\""
+    return
+  fi
+  host=$(cat /proc/sys/kernel/hostname)
+  names=$(nix eval --json "$os_flake#nixosConfigurations" --apply builtins.attrNames 2>/dev/null) \
+    || die "can't read $os_flake/flake.nix"
+  if echo "$names" | jq -e --arg h "$host" 'index($h)' >/dev/null; then
+    echo "nixosConfigurations.\"$host\""
+  elif [ "$(echo "$names" | jq length)" = 1 ]; then
+    echo "nixosConfigurations.\"$(echo "$names" | jq -r '.[0]')\""
+  else
+    die "$os_flake has no config named $host (only $(echo "$names" | jq -r 'join(", ")'))"
+  fi
+}
+
+# Ask ./smx-eval.nix about this scope's options (see there): $2 is a Nix
+# request, e.g. '{ list = true; }'. Prints JSON, or the error and fails.
+ask() {
+  err=$(mktemp)
+  if ! nix eval --impure --json "$(flake_of "$1")#$(config_attr "$1")" \
+      --apply "c: import $smx_eval c $2" 2>"$err"; then
+    grep -v '^warning:' "$err" >&2
+    rm -f "$err"
+    return 1
+  fi
+  rm -f "$err"
+}
+
+# A key ("desktop.binds.\"Mod+T\"") as a JSON path (["desktop","binds","Mod+T"]).
+key_path() {
+  jq -cn --arg k "$1" '[$k | scan("\"[^\"]*\"|[^.\"]+") | ltrimstr("\"") | rtrimstr("\"")]'
+}
+
+# A JSON path as a key.
+path_key() {
+  jq -r 'map(if test("^[A-Za-z0-9_-]+$") then . else tojson end) | join(".")' <<<"$1"
+}
+
+# One option's details (see ./smx-eval.nix), or die explaining why not.
+describe() {
+  path=$(key_path "$2")
+  info=$(ask "$1" "{ path = builtins.fromJSON ''$path''; }") || exit 1
+  if [ "$(jq -r '.error // empty' <<<"$info")" = unknown ]; then
+    say "there's no setting $2"
+    suggestions=$(jq -r '.suggestions | .[0:8] | join("\n  ")' <<<"$info")
+    [ -z "$suggestions" ] || echo "Did you mean:"$'\n'"  $suggestions" >&2
+    exit 1
+  fi
+  echo "$info"
+}
+
+settings_json() {
+  file=$(settings_of "$1")
+  if [ -s "$file" ]; then remarshal -if toml -of json "$file"; else echo '{}'; fi
+}
+
+# Write this scope's file $2 from stdin (as root, via sudo, for the OS).
+write_file() {
+  if [ "$1" = os ] && [ "$(id -u)" -ne 0 ]; then
+    need_admin
+    sudo tee "$2" >/dev/null
+  else
+    cat > "$2"
+  fi
+}
+
+write_settings() {
+  {
+    echo "# smudgenix settings, written by \`$(prefix_of "$1") config set\`. Each one is a"
+    echo "# smudgenix option, and wins over the same option set in flake.nix."
+    echo "# (Comments here aren't kept.)"
+    echo
+    remarshal -if json -of toml
+  } | write_file "$1" "$(settings_of "$1")"
+}
+
+# Fail unless this config reads smudgenix.toml.
+needs_settings_file() {
+  if [ "$(jq -r '.settingsFile // empty' <<<"$2")" = "" ]; then
+    say "$(tildify "$(flake_of "$1")")/flake.nix doesn't read smudgenix.toml yet. Add"
+    say "  settings = ./smudgenix.toml;"
+    die "to its $([ "$1" = os ] && echo mkSystem || echo mkHome) { … }, then try again."
+  fi
+}
+
+# A value from the command line, as JSON for the option's type.
+parse_value() {
+  info=$1 raw=$2
+  type=$(jq -r .type <<<"$info")
+  if [ "$(jq -r '.inner | length' <<<"$info")" = 0 ]; then
+    case "$(jq -r .typeName <<<"$info")" in
+      str|nonEmptyStr|singleLineStr|strMatching|enum|separatedString|lines|passwdEntry)
+        jq -n --arg v "$raw" '$v'; return ;;
+      bool)
+        case "$raw" in
+          true|yes|on|1) echo true ;;
+          false|no|off|0) echo false ;;
+          *) die "$(jq -r .key <<<"$info") is $type: true or false" ;;
+        esac
+        return ;;
+      package)
+        die "packages can't go in smudgenix.toml; set $(jq -r .key <<<"$info") in flake.nix (\`config edit --nix\`)" ;;
+    esac
+  fi
+  if value=$(jq -c . <<<"$raw" 2>/dev/null) && [ -n "$value" ]; then
+    [ "$value" != null ] || die "to clear a setting, use \`config unset\`"
+    echo "$value"
+  else
+    jq -n --arg v "$raw" '$v'
+  fi
+}
+
+# Shows a value: strings bare, everything else as JSON.
+show_value() { jq -r 'if type == "string" then . else tojson end' <<<"$1"; }
+
+config_get() {
+  [ $# = 1 ] || die "usage: $(prefix_of "$scope") config get <key>"
+  info=$(describe "$scope" "$1")
+  show_value "$(jq -c .value <<<"$info")"
+  if [ -t 1 ]; then
+    jq -r '"  (\(if .origin == "default" then "the default" else "from \(.origin)" end); \(.type); default \(.default))"' <<<"$info" >&2
+  fi
+}
+
+config_list() {
+  if [ "${1:-}" = --all ]; then
+    ask "$scope" '{ list = true; }' | jq -r '.[] | "\(.key) = \(.value | if type == "string" then . else tojson end | .[0:70])\(if .origin == "default" then "" else "  (\(.origin))" end)"'
+    return
+  fi
+  [ $# = 0 ] || die "usage: $(prefix_of "$scope") config list [--all]"
+  settings_json "$scope" | jq -c '. as $s | [paths(type != "object")]
+    | map(select(all(.[]; type == "string")))[] | . as $p | [$p, ($s | getpath($p))]' | while read -r pair; do
+    echo "$(path_key "$(jq -c '.[0]' <<<"$pair")") = $(show_value "$(jq -c '.[1]' <<<"$pair")")"
+  done
+}
+
+config_set() {
+  apply=""
+  rest=()
+  for a in "$@"; do [ "$a" = --apply ] && apply=1 || rest+=("$a"); done
+  [ ${#rest[@]} = 2 ] || die "usage: $(prefix_of "$scope") config set <key> <value> [--apply]"
+  key=${rest[0]}
+  info=$(describe "$scope" "$key")
+  needs_settings_file "$scope" "$info"
+  value=$(parse_value "$info" "${rest[1]}")
+  path=$(key_path "$key")
+  old=$(settings_json "$scope")
+  jq --argjson p "$path" --argjson v "$value" 'setpath($p; $v)' <<<"$old" | write_settings "$scope"
+  # Check the config takes it; if not, put the file back.
+  if ! check=$(ask "$scope" "{ check = builtins.fromJSON ''$path''; }" 2>&1); then
+    write_settings "$scope" <<<"$old"
+    echo "$check" | tail -5 >&2
+    die "$key can't be $(show_value "$value"); left it as it was"
+  fi
+  say "$key = $(show_value "$value")"
+  if [ -n "$apply" ]; then
+    config_apply_now
+  else
+    say "(not applied yet: \`$(prefix_of "$scope") config apply\`)"
+  fi
+}
+
+config_unset() {
+  [ $# = 1 ] || die "usage: $(prefix_of "$scope") config unset <key>"
+  path=$(key_path "$1")
+  old=$(settings_json "$scope")
+  if [ "$(jq --argjson p "$path" 'getpath($p) == null' <<<"$old")" = true ]; then
+    info=$(describe "$scope" "$1")
+    if [ "$(jq -r .origin <<<"$info")" = flake.nix ]; then
+      die "$1 isn't in smudgenix.toml: it's set in flake.nix (\`$(prefix_of "$scope") config edit --nix\`)"
+    fi
+    die "$1 isn't set, so it's already the default"
+  fi
+  jq --argjson p "$path" 'delpaths([$p])
+    | walk(if type == "object" then with_entries(select(.value != {})) else . end)' <<<"$old" \
+    | write_settings "$scope"
+  say "$1 is back to its default (not applied yet: \`$(prefix_of "$scope") config apply\`)"
+}
+
+# Whether this config builds, after an edit.
+config_check() {
+  say "checking…"
+  if [ "$1" = os ]; then
+    ask os '{ path = [ "settingsFile" ]; } // { _ = c.config.system.build.toplevel.drvPath; }' >/dev/null 2>&1 || true
+    target="$(flake_of os)#$(config_attr os).config.system.build.toplevel.drvPath"
+  else
+    target="$(flake_of home)#$(config_attr home).activationPackage.drvPath"
+  fi
+  if ! err=$(nix eval --raw "$target" 2>&1 >/dev/null); then
+    echo "$err" | grep -v '^warning:' | tail -15 >&2
+    die "that doesn't work yet; fix it with \`$(prefix_of "$1") config edit\`"
+  fi
+}
+
+config_edit() {
+  file=$(settings_of "$scope")
+  case "${1:-}" in
+    --nix) file="$(flake_of "$scope")/flake.nix" ;;
+    "") [ -e "$file" ] || echo '{}' | write_settings "$scope" ;;
+    *) die "usage: $(prefix_of "$scope") config edit [--nix]" ;;
+  esac
+  before=$(cat "$file")
+  if [ "$scope" = os ]; then
+    need_admin
+    sudoedit "$file"
+  else
+    read -ra editor <<<"${VISUAL:-${EDITOR:-vi}}"
+    "${editor[@]}" "$file"
+  fi
+  if [ "$(cat "$file")" = "$before" ]; then
+    say "no changes"
+    return
+  fi
+  config_check "$scope"
+  if [ -t 0 ] && confirm "Apply it now?"; then
+    config_apply_now
+  else
+    say "(not applied yet: \`$(prefix_of "$scope") config apply\`)"
+  fi
+}
+
+# A copy of the config as last applied, for `config diff` and `reset`.
+applied_dir() { echo "$(state_of "$1")/applied"; }
+
+snapshot() {
+  dir=$(applied_dir "$1")
+  mkdir -p "$dir"
+  for f in flake.nix smudgenix.toml; do
+    if [ -e "$(flake_of "$1")/$f" ]; then cp "$(flake_of "$1")/$f" "$dir/$f"; else rm -f "$dir/$f"; fi
+  done
+}
+
+# The changes to the config files since the last apply (none: fails).
+file_changes() {
+  dir=$(applied_dir "$1") changed=1
+  for f in flake.nix smudgenix.toml; do
+    a="$dir/$f" b="$(flake_of "$1")/$f"
+    [ -e "$a" ] || a=/dev/null
+    [ -e "$b" ] || b=/dev/null
+    diff -u --label "$f (applied)" --label "$f" "$a" "$b" && continue
+    changed=0
+  done
+  return $changed
+}
+
+config_diff() {
+  [ $# = 0 ] || die "usage: $(prefix_of "$scope") config diff"
+  current=$(readlink -e "$([ "$scope" = os ] && echo "$os_profile" || echo "$home_profile")") \
+    || { echo "Nothing applied yet: \`$(prefix_of "$scope") config apply\` applies it all."; return; }
+  if [ -d "$(applied_dir "$scope")" ]; then
+    if ! file_changes "$scope"; then
+      echo "Nothing to apply."
+      return
+    fi
+    echo
+  else
+    say "there's no record of what was applied last (one's kept from the next apply)"
+  fi
+  say "building, to compare packages…"
+  if [ "$scope" = os ]; then
+    new=$(nix build --no-link --print-out-paths "$os_flake#$(config_attr os).config.system.build.toplevel")
+  else
+    new=$(nix build --no-link --print-out-paths "$home_flake#$(config_attr home).activationPackage")
+  fi
+  changes=$(nix store diff-closures "$current" "$new")
+  if [ -n "$changes" ]; then echo "$changes"; else echo "No package changes."; fi
+}
+
+config_reset() {
+  force=""
+  [ "${1:-}" != -f ] || force=1
+  dir=$(applied_dir "$scope")
+  [ -d "$dir" ] || die "there's no record of what was applied last (one's kept from the next apply)"
+  if ! file_changes "$scope"; then
+    echo "Nothing to reset."
+    return
+  fi
+  if [ -z "$force" ]; then
+    [ -t 0 ] || die "run it in a terminal to confirm, or with -f"
+    confirm "Discard these changes?" || exit 1
+  fi
+  # (Kept, in case.)
+  backup="$home_state/discarded/$scope-$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$backup"
+  for f in flake.nix smudgenix.toml; do
+    target="$(flake_of "$scope")/$f"
+    [ ! -e "$target" ] || cp "$target" "$backup/$f"
+    if [ -e "$dir/$f" ]; then
+      write_file "$scope" "$target" < "$dir/$f"
+    elif [ -e "$target" ]; then
+      if [ "$scope" = os ] && [ "$(id -u)" -ne 0 ]; then sudo rm "$target"; else rm "$target"; fi
+    fi
+  done
+  say "discarded (kept in $(tildify "$backup"))"
+}
+
+# Browse every setting (with fzf), and change some.
+config_browse() {
+  if ! [ -t 0 ] || ! [ -t 1 ]; then
+    config_list --all
+    return
+  fi
+  list=$(mktemp)
+  trap 'rm -f "$list"' EXIT
+  changed=""
+  # (Each change runs as its own smx, so a mistake stops just that change.)
+  self=("$0")
+  [ "$scope" != os ] || self+=(os)
+  while true; do
+    say "reading the settings…"
+    ask "$scope" '{ list = true; }' > "$list" || exit 1
+    # shellcheck disable=SC2016
+    key=$(jq -r '.[] | "\(.key)\t\(.value | if type == "string" then . else tojson end | .[0:60])\t\(if .origin == "default" then "" else .origin end)"' "$list" \
+      | awk -F'\t' '{ printf "%-36s %-62s %s\n", $1, $2, $3 }' \
+      | fzf --no-sort --reverse --prompt "$(prefix_of "$scope") config> " \
+          --header "Enter: change   Esc: done" \
+          --preview "jq -r --arg k {1} '.[] | select(.key == \$k) | \"\(.key)\n\n\(.description)\nType: \(.type)\nDefault: \(.default)\nValue: \(.value | tojson)\nFrom: \(.origin)\"' $list" \
+          --preview-window down,40%,wrap \
+      | awk '{ print $1 }') || break
+    [ -n "$key" ] || break
+    current=$(jq -r --arg k "$key" '.[] | select(.key == $k) | .value | if type == "string" then . else tojson end' "$list")
+    echo "$key (empty: leave it; -: back to the default)"
+    read -r -e -i "$current" -p "  = " value || break
+    if [ "$value" = - ]; then
+      if "${self[@]}" config unset "$key"; then changed=1; fi
+    elif [ -n "$value" ] && [ "$value" != "$current" ]; then
+      if "${self[@]}" config set "$key" "$value"; then changed=1; fi
+    fi
+  done
+  if [ -n "$changed" ] && confirm "Apply the changes now?"; then
+    config_apply_now
+  fi
+}
+
+confirm() {
+  read -r -p "$1 [y/N] " answer
+  case "$answer" in y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+config_apply_now() { "${scope}_apply"; }
+
+config_command() {
+  scope=$1; shift
+  config_attr_cache=$(config_attr "$scope")
+  case "${1:-}" in
+    "") config_browse ;;
+    list) shift; config_list "$@" ;;
+    get) shift; config_get "$@" ;;
+    set) shift; config_set "$@" ;;
+    unset) shift; config_unset "$@" ;;
+    edit) shift; config_edit "$@" ;;
+    diff) shift; config_diff "$@" ;;
+    reset) shift; config_reset "$@" ;;
+    apply) shift; "${scope}_apply" "$@" ;;
+    *) say "unknown command '$(prefix_of "$scope" | cut -c5-) config $1'"; die "see \`$(prefix_of "$scope") help\`" ;;
+  esac
 }
 
 # --- Tools ----------------------------------------------------------------
@@ -333,14 +737,6 @@ env_shell() {
 }
 
 # --- Commands -------------------------------------------------------------
-
-config_command() {
-  scope=$1; shift
-  case "${1:-}" in
-    apply) shift; "${scope}_apply" "$@" ;;
-    *) die "usage: smx $([ "$scope" = os ] && echo "os ")config apply" ;;
-  esac
-}
 
 os_command() {
   case "${1:-}" in

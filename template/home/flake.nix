@@ -30,6 +30,8 @@
     homeConfigurations."@username@" = smudgenix.lib.mkHome {
       username = "@username@";
       system = "@system@";
+      # Settings from `smx config set` (if any; they win over this file's).
+      settings = ./smudgenix.toml;
       # home-manager release this home was first set up with. Never change it
       # after setup:
       stateVersion = "@stateVersion@";

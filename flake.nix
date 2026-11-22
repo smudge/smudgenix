@@ -7,6 +7,7 @@
 #   │   ├─ default.nix
 #   │   └─ modules/
 #   ├─ ./theme        (smudge: palette, fonts & wallpaper, for both)
+#   ├─ ./settings.nix (smudgenix.toml, the settings `smx config` writes)
 #   ├─ ./checks       (example host & home, built by `nix flake check`)
 #   └─ ./template
 #       ├─ nixos/     (per-host, uncommitted /etc/nixos flake)

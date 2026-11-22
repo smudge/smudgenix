@@ -7,6 +7,7 @@ let
   pkgs = nixpkgs.legacyPackages.${system};
 
   host = self.lib.mkSystem {
+    settings = ./smudgenix.toml;
     modules = [
       ({ ... }: {
         nixpkgs.hostPlatform = system;

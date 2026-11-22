@@ -19,6 +19,8 @@
     hostname = "<YOUR HOSTNAME HERE>";
   in {
     nixosConfigurations.${hostname} = nixos.lib.mkSystem {
+      # Settings from `smx os config set` (if any; they win over this file's).
+      settings = ./smudgenix.toml;
       modules = [
         ./hardware-configuration.nix
         # nixos.hardware.nixosModules.<YOUR NIXOS HARDWARE TYPE>

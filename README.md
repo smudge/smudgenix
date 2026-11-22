@@ -71,18 +71,28 @@ change it. `smx help` and `smx os help` list everything.
 
 ```bash
 smx update          # get the latest (the OS's smudgenix) for your home, and apply it
-smx config apply    # apply your edits to ~/.config/home-manager/flake.nix
+smx config          # browse your settings, and change them
+smx config set dev.enable false
+smx config diff     # what applying would change
+smx config apply    # apply your changes
 smx history         # your home's generations
 smx revert [<gen>]  # back to the previous generation, or to <gen>
 
 smx os update       # regenerate /etc/nixos/flake.lock, and apply it
-smx os config apply # apply your edits to /etc/nixos/flake.nix
+smx os config set hiDPI true
+smx os config apply
 smx os revert [<gen>]
 ```
 
 The OS commands take `--try` (only until the next reboot) or `--on-reboot`
 (from the next reboot). After a revert, automatic updates wait until the next
 `update` or `config apply`.
+
+`config set` writes `smudgenix.toml`, next to the flake (which reads it with
+`settings = ./smudgenix.toml;`). Its keys are `smudgenix.*` options, checked
+against their types, and they win over the same options set in `flake.nix`.
+For anything else, `config edit --nix` edits `flake.nix` itself, and checks
+it before applying. `config reset` puts both back as they were last applied.
 
 Updates use your `gh` login, if any, to avoid GitHub rate limits.
 
