@@ -65,7 +65,16 @@ in
     }];
 
     # Secrets (saved passwords & keys, for libsecret apps) in oo7, unlocked
-    # with the login password. (It also adopts gnome-keyring's keyrings.)
+    # with the login password.
+    #
+    # Coming from gnome-keyring: on the first password login, oo7 converts
+    # ~/.local/share/keyrings/login.keyring into its own format (in v1/),
+    # and marks the original `.migrated`. That takes the keyring's password
+    # to match the login password. Once everything's there, the old files can
+    # go.
+    #
+    # It only unlocks at login, so restarting oo7-daemon locks it until the
+    # next login.
     services.oo7.enable = true;
     # A fingerprint can't unlock it, so logging in takes the password. (The
     # lock screen reads fingerprints itself; see ./noctalia.nix.)
