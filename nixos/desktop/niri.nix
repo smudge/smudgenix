@@ -4,9 +4,10 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (config.smudgenix) desktop;
+  inherit (config.smudgenix) apps desktop;
   cfg = desktop.niri;
   theme = import ../../theme pkgs;
+  filePickerId = "smudgenix.filepicker";
 
   kdlValue = v:
     if lib.isBool v then lib.boolToString v
@@ -82,6 +83,13 @@ let
         open-floating true
     }
 
+    window-rule {
+        match app-id=r#"^${lib.escapeRegex filePickerId}$"#
+        open-floating true
+        default-column-width { proportion 0.6; }
+        default-window-height { proportion 0.7; }
+    }
+
     binds {
     ${binds}
     }
@@ -106,10 +114,11 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkMerge [ (lib.mkIf cfg.enable {
     programs.niri = {
       enable = true;
-      # Use the GTK file chooser rather than pulling in Nautilus.
+      # (With `apps.filePicker = "gtk"`) use the GTK file chooser, rather
+      # than pulling in Nautilus.
       useNautilus = false;
     };
 
@@ -120,6 +129,26 @@ in
       xwayland-satellite # X11 apps (niri starts it on demand)
       brightnessctl
       playerctl
+      bluetui # bluetooth & audio, in the terminal
+      wiremix
     ];
-  };
+  })
+
+  (lib.mkIf (cfg.enable && apps.filePicker == "yazi") {
+    # Choose files with yazi, in a (floating) terminal. GTK apps & Firefox
+    # only ask the portal when GTK_USE_PORTAL is set, so set it for niri
+    # sessions (niri-session passes the login shell's environment on).
+    xdg.portal.extraPortals = [ pkgs.xdg-desktop-portal-termfilechooser ];
+    xdg.portal.config.niri."org.freedesktop.impl.portal.FileChooser" = lib.mkForce "termfilechooser";
+    environment.extraInit = ''
+      if [ "''${XDG_CURRENT_DESKTOP:-}" = niri ]; then export GTK_USE_PORTAL=1; fi
+    '';
+    systemd.user.services.xdg-desktop-portal-termfilechooser = {
+      path = [ pkgs.yazi pkgs.xdg-terminal-exec apps.terminal ];
+      environment.TERMCMD =
+        if lib.getName apps.terminal == "alacritty"
+        then "${lib.getExe apps.terminal} --class ${filePickerId} -e"
+        else "xdg-terminal-exec --app-id=${filePickerId}";
+    };
+  }) ];
 }

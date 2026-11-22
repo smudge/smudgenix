@@ -4,11 +4,12 @@
 { config, lib, pkgs, ... }:
 
 let
-  inherit (config.smudgenix) apps desktop;
+  inherit (config.smudgenix) desktop;
   theme = import ../../theme pkgs;
 in
 {
   imports = [
+    ./apps.nix
     ./binds.nix
     ./gnome.nix
     ./niri.nix
@@ -38,13 +39,6 @@ in
           description = "Key repeats per second.";
         };
       };
-    };
-
-    apps = {
-      browser = lib.mkPackageOption pkgs "firefox" { };
-      terminal = lib.mkPackageOption pkgs "alacritty" { };
-      fileManager = lib.mkPackageOption pkgs "nemo" { };
-      imageViewer = lib.mkPackageOption pkgs "eog" { };
     };
   };
 
@@ -98,15 +92,11 @@ in
     services.gnome.gnome-keyring.enable = true;
     security.pam.services.gdm.enableGnomeKeyring = true;
 
-    # GTK themes, libsecret & the default desktop apps:
+    # GTK themes & libsecret:
     environment.systemPackages = [
       pkgs.gnome-themes-extra # Adwaita-dark for GTK3
       pkgs.adwaita-icon-theme
       pkgs.libsecret
-      apps.browser
-      apps.terminal
-      apps.fileManager
-      apps.imageViewer
     ];
   };
 }

@@ -1,7 +1,7 @@
 # Keybinds for tiling sessions, as `"Mods+Key" = action`. An action is a niri
 # action string, or an attrset of { action; <bind options> } (e.g. repeat =
 # false). Hosts can add binds, replace them, or drop one by setting it to null.
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   inherit (config.smudgenix) apps;
@@ -10,6 +10,8 @@ let
   spawn = args: "spawn ${lib.concatMapStringsSep " " kdlStr args}";
   spawnSh = cmd: "spawn-sh ${kdlStr cmd}";
   open = title: pkg: { action = spawn [ (lib.getExe pkg) ]; hotkey-overlay-title = title; };
+  # Via its desktop entry, so terminal apps (like yazi) open in the terminal.
+  launch = title: entry: { action = spawn [ "${pkgs.glib.bin}/bin/gio" "launch" entry ]; hotkey-overlay-title = title; };
   media = action: { inherit action; allow-when-locked = true; };
 
   # Mod+<n> / Mod+Ctrl+<n> for workspaces 1-9.
@@ -42,7 +44,7 @@ let
       hotkey-overlay-title = "Reopen a Closed Terminal";
     };
     "Mod+B" = open "Open the Browser" apps.browser;
-    "Mod+E" = open "Open the File Manager" apps.fileManager;
+    "Mod+E" = launch "Open the File Manager" apps.entries.fileManager;
 
     # Windows & columns
     "Mod+Q" = { action = "close-window"; repeat = false; };
