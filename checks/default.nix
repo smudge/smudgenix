@@ -13,6 +13,7 @@ let
         fileSystems."/" = { device = "/dev/disk/by-label/nixos"; fsType = "ext4"; };
         networking.hostName = "example";
         system.stateVersion = "26.11";
+        smudgenix.desktop.niri.enable = true;
         smudgenix.user = {
           name = "example";
           git = { name = "Example"; email = "example@example.com"; };

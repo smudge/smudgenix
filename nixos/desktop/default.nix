@@ -8,12 +8,21 @@ let
 in
 {
   imports = [
+    ./binds.nix
     ./gnome.nix
+    ./niri.nix
   ];
 
   options.smudgenix = {
     desktop = {
       gnome.enable = lib.mkEnableOption "the GNOME desktop session" // { default = true; };
+
+      defaultSession = lib.mkOption {
+        type = lib.types.enum [ "gnome" "niri" ];
+        default = if desktop.gnome.enable then "gnome" else "niri";
+        defaultText = lib.literalExpression ''if gnome.enable then "gnome" else "niri"'';
+        description = "Session preselected at login (users can still pick another).";
+      };
 
       keyRepeat = {
         delay = lib.mkOption {
@@ -38,6 +47,12 @@ in
   };
 
   config = {
+    assertions = [{
+      assertion = desktop.${desktop.defaultSession}.enable;
+      message = "smudgenix: `desktop.defaultSession` (\"${desktop.defaultSession}\") must be enabled.";
+    }];
+
+    services.displayManager.defaultSession = desktop.defaultSession;
     services.displayManager.gdm.enable = true;
 
     # Hint to electron apps that they should use Wayland
