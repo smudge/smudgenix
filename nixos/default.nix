@@ -14,7 +14,7 @@ let
       ./audio.nix
       ./display.nix
       ./inputs.nix
-      ./desktop.nix
+      ./desktop
       ./userland.nix
       ./gaming.nix
     ];

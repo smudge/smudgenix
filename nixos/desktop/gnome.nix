@@ -1,16 +1,6 @@
-{ pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
-{
-  # Hint to electron apps that they should use Wayland
-  environment.sessionVariables.NIXOS_OZONE_WL = "1";
-
-  # Symbol glyphs (powerline/nerd-font) for terminal UIs:
-  fonts.packages = with pkgs; [
-    powerline-fonts
-    powerline-symbols
-    nerd-fonts.symbols-only
-  ];
-
+lib.mkIf config.smudgenix.desktop.gnome.enable {
   # Enable X11 for compatibility reasons:
   services.xserver.enable = true;
   services.xserver.excludePackages = [ pkgs.xterm ];

@@ -6,7 +6,6 @@
   config = lib.mkMerge [
     {
       hardware.graphics.enable = true;
-      services.displayManager.gdm.enable = true;
     }
 
     (lib.mkIf config.smudgenix.hiDPI {
