@@ -84,17 +84,31 @@ let
       media.show_visualizer = false;
     };
 
-    # A thin bar, flush with the top edge.
+    # A thin bar along the top edge, with widgets grouped in capsules. It
+    # hides itself when a window needs the space.
     bar.default = {
       thickness = 28;
       radius = 0;
       margin_edge = 0;
-      margin_ends = 0;
+      margin_ends = "1%";
       shadow = false;
       compositor_blur = false;
-      start = [ "workspaces" ];
+      capsule = true;
+      layer = "auto";
+      smart_auto_hide = true;
+      reserve_space = false;
+      start = [ "launcher" "wallpaper" "workspaces" "media" ];
       center = [ "clock" ];
-      end = [ "tray" "notifications" "network" "bluetooth" "volume" "brightness" "battery" "control-center" "session" ];
+      end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "clipboard" "notifications" "control-center" "session" ];
+    };
+
+    # Icons only, and a short date & time.
+    widget = {
+      clock = { capsule = false; format = "{:%b %-d, %Y %I:%M%P}"; };
+      battery = { display_mode = "graphic"; hide_when_full = true; show_label = false; };
+      brightness.show_label = false;
+      network.show_label = false;
+      volume.show_label = false;
     };
   };
 
