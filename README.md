@@ -66,12 +66,13 @@ Updates are driven by what is pushed upstream:
 To update manually:
 
 ```bash
-/etc/nixos/rebuild_flake.sh            # regenerates flake.lock, then switches
-~/.config/home-manager/rebuild_flake.sh # same, for the home flake
+smx upgrade      # regenerates /etc/nixos/flake.lock, then switches (with sudo)
+smx home update  # same, for your home flake
 ```
 
-Both (and the daily home update) use your `gh` login, if any, to avoid GitHub
-rate limits.
+`smx` is installed for every user (`smx help` lists its commands). Both
+commands, and the daily home update, use your `gh` login, if any, to avoid
+GitHub rate limits.
 
 For local iteration, point either per-host flake's input at a checkout with
 `path:/path/to/checkout` instead of the GitHub URL.

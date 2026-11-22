@@ -8,7 +8,7 @@
 #
 # Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   /etc/nixos/rebuild_flake.sh
+#   smx upgrade
 
 {
   description = "Per-host NixOS config";

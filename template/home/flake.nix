@@ -11,7 +11,7 @@
 #
 # Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   ~/.config/home-manager/rebuild_flake.sh
+#   smx home update
 
 {
   description = "Per-home home-manager config";

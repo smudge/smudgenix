@@ -16,6 +16,7 @@ let
       ./inputs.nix
       ./desktop
       ./userland.nix
+      ./smx.nix
       ./gaming.nix
     ];
   };
