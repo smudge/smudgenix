@@ -59,6 +59,12 @@ in
       bind -n M-d split-window -h -c "#{pane_current_path}"
       bind -n M-D split-window -v -c "#{pane_current_path}"
 
+      # New window (Alt+t), in the same dir.
+      bind -n M-t new-window -c "#{pane_current_path}"
+
+      # Close the pane (Alt+w); closing a window's last pane closes it too.
+      bind -n M-w kill-pane
+
       # Ctrl+hjkl focuses panes (and nvim splits, via vim-tmux-navigator);
       # Alt+arrows does the same.
       bind -n M-Left select-pane -L
