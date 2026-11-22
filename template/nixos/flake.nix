@@ -39,6 +39,16 @@
             };
             hiDPI = false;
             gaming = false;
+            desktop = {
+              gnome.enable = true;
+              # niri (scrollable tiling) with the Noctalia shell, alongside or
+              # instead of GNOME:
+              niri.enable = false;
+              # defaultSession = "niri";
+              # keyRepeat = { delay = 200; rate = 40; };
+              # binds."Mod+T" = ''spawn "alacritty"'';
+              # noctalia.settings.bar.main.position = "bottom";
+            };
             # Daily auto-update time, in `time.timeZone` (or any systemd
             # calendar spec via `autoUpdate.dates`):
             # autoUpdate.time = "04:00";
