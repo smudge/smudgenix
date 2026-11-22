@@ -90,11 +90,10 @@ let
       media.show_visualizer = false;
     };
 
-    # A thin bar along the top edge, with widgets grouped in capsules. It
-    # hides itself when a window needs the space.
+    # A thin bar along the top edge, with rounded ends and widgets grouped in
+    # capsules. It hides itself when a window needs the space.
     bar.default = {
       thickness = 28;
-      radius = 0;
       margin_edge = 0;
       margin_ends = "1%";
       shadow = false;
