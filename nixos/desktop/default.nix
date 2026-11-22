@@ -64,9 +64,14 @@ in
       };
     }];
 
-    # Use libsecret and launch gnome-keyring at startup.
-    services.gnome.gnome-keyring.enable = true;
-    security.pam.services.greetd.enableGnomeKeyring = true;
+    # Secrets (saved passwords & keys, for libsecret apps) in oo7, unlocked
+    # with the login password. (It also adopts gnome-keyring's keyrings.)
+    services.oo7.enable = true;
+    services.gnome.gnome-keyring.enable = false;
+    xdg.portal.config.niri."org.freedesktop.impl.portal.Secret" = lib.mkForce "oo7-portal";
+
+    # And an SSH agent.
+    programs.ssh.startAgent = true;
 
     # GTK themes & libsecret:
     environment.systemPackages = [
