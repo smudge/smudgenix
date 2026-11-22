@@ -30,10 +30,8 @@ in
   '';
 
   programs.alacritty = lib.mkIf config.smudgenix.apps.enable {
-    enable = true;
     settings = {
       font.normal.family = theme.fonts.mono.name;
-      window.padding = { x = 6; y = 4; };
       colors = {
         primary = { inherit (theme.terminal) background foreground; };
         cursor = { text = c.base00; cursor = c.base05; };
