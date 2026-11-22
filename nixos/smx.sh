@@ -50,6 +50,12 @@ The OS (/etc/nixos), shared by every user:
   os ...                  The same commands, for the OS (see \`smx os help\`)
 
 Tools:
+  shell <pkg>... [-- <cmd>]
+                          A shell with these packages (from the OS's nixpkgs)
+  run <pkg> [args]        Run a package's program, without installing it
+  search <words>          Find packages
+  clean [<days>d]         Delete your generations older than that (14d), and
+                          then what nothing uses any more
   env [<shell> [-f]]      Write a .envrc using a devShell from $(tildify "$devshells"),
                           or list them
   help                    Show this help
@@ -70,6 +76,8 @@ $(config_usage)
   history                 List the OS's generations
   revert [<gen>] [when]   Go back to the previous generation, or to <gen>
   upgrade                 Move to the next smudgenix release
+  clean [<days>d]         Delete the OS's generations older than that (14d),
+                          and then what nothing uses any more
 
 [when] is when it takes effect: now and for good (by default), or
   --try                   now, until the next reboot
@@ -726,6 +734,97 @@ config_command() {
 
 # --- Tools ----------------------------------------------------------------
 
+# A package from the OS's nixpkgs ("ripgrep"), or any flake ref as is.
+pkg_ref() { case "$1" in *#*|*:*) echo "$1" ;; *) echo "nixpkgs#$1" ;; esac; }
+
+# Unfree packages, too, where the OS allows them ($allow_unfree, from
+# ./smx.nix). (Nix only reads that from the environment, in impure mode.)
+nix_pkgs() {
+  if [ -n "$allow_unfree" ]; then
+    NIXPKGS_ALLOW_UNFREE=1 nix "$1" --impure "${@:2}"
+  else
+    nix "$@"
+  fi
+}
+
+shell_with() {
+  refs=() cmd=()
+  while [ $# -gt 0 ]; do
+    if [ "$1" = -- ]; then shift; cmd=("$@"); break; fi
+    refs+=("$(pkg_ref "$1")")
+    shift
+  done
+  [ ${#refs[@]} -gt 0 ] || die "usage: smx shell <package>... [-- <command>]"
+  if [ ${#cmd[@]} -gt 0 ]; then
+    nix_pkgs shell "${refs[@]}" --command "${cmd[@]}"
+  else
+    say "a shell with ${refs[*]#nixpkgs#} (exit to leave)"
+    nix_pkgs shell "${refs[@]}"
+  fi
+}
+
+run_pkg() {
+  [ $# -ge 1 ] || die "usage: smx run <package> [args]"
+  pkg=$1; shift
+  [ "${1:-}" != -- ] || shift
+  nix_pkgs run "$(pkg_ref "$pkg")" -- "$@"
+}
+
+search_pkgs() {
+  [ $# -ge 1 ] || die "usage: smx search <words>"
+  [ ! -t 1 ] || say "searching (the first search after an update takes a while)…"
+  nix search nixpkgs "$@" --json \
+    | jq -r 'to_entries[] | (.key | sub("^legacyPackages\\.[^.]+\\."; "")) as $name
+        | "\($name) \(.value.version)\(if .value.description != "" then "\n    \(.value.description)" else "" end)"'
+}
+
+# Generations of profile $1 that `clean` with age $2 (like 14d) deletes:
+# older than that, and not the current one.
+old_generations() {
+  cutoff=$(( $(date +%s) - ${2%d} * 86400 ))
+  current=$(current_generation "$1")
+  for link in "$1"-*-link; do
+    [ -e "$link" ] || continue
+    n=${link##"$1"-}; n=${n%-link}
+    if [ "$n" != "$current" ] && [ "$(stat -c %Y "$link")" -lt "$cutoff" ]; then echo "$n"; fi
+  done | sort -n | tr '\n' ' '
+}
+
+# Delete generations older than an age (14d by default), and then whatever
+# nothing uses any more.
+clean() {
+  scope=$1; shift
+  age=14d force=""
+  for a in "$@"; do
+    case "$a" in
+      -f) force=1 ;;
+      [0-9]*d) age=$a ;;
+      *) die "usage: $(prefix_of "$scope") clean [<days>d] [-f]" ;;
+    esac
+  done
+  profile=$([ "$scope" = os ] && echo "$os_profile" || echo "$home_profile")
+  old=$(old_generations "$profile" "$age")
+  if [ -n "$old" ]; then
+    echo "Deletes generations ${old% } (older than ${age%d} days); \`revert\` can't go back to them after."
+  else
+    echo "No generations are older than ${age%d} days; deletes only what nothing uses."
+  fi
+  if [ -z "$force" ]; then
+    [ -t 0 ] || die "run it in a terminal to confirm, or with -f"
+    confirm "Go ahead?" || exit 1
+  fi
+  if [ "$scope" = os ]; then
+    # (Confirmed already: as root, it goes ahead.)
+    args+=(-f)
+    as_root
+    nix-collect-garbage --delete-older-than "$age"
+    # (And drop them from the boot menu.)
+    "$os_profile/bin/switch-to-configuration" boot
+  else
+    nix-collect-garbage --delete-older-than "$age"
+  fi
+}
+
 list_shells() {
   nix eval --json "$devshells#devShells.$system" --apply builtins.attrNames | jq -r '.[]'
 }
@@ -762,6 +861,7 @@ os_command() {
     history) os_history ;;
     revert) shift; os_revert "$@" ;;
     upgrade) os_upgrade ;;
+    clean) shift; clean os "$@" ;;
     help|-h|--help) os_usage ;;
     *) say "unknown command 'os $1'"; os_usage >&2; exit 1 ;;
   esac
@@ -775,6 +875,10 @@ case "${1:-}" in
   history) home_history ;;
   revert) shift; home_revert "$@" ;;
   os) shift; os_command "$@" ;;
+  shell) shift; shell_with "$@" ;;
+  run) shift; run_pkg "$@" ;;
+  search) shift; search_pkgs "$@" ;;
+  clean) shift; clean home "$@" ;;
   env) shift; env_shell "$@" ;;
   help|-h|--help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;

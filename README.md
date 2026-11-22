@@ -82,6 +82,12 @@ smx os update       # regenerate /etc/nixos/flake.lock, and apply it
 smx os config set hiDPI true
 smx os config apply
 smx os revert [<gen>]
+
+smx shell ripgrep jq # a shell with these packages, from the OS's nixpkgs
+smx run cowsay hi    # run one, without installing it
+smx search pdf       # find packages
+smx clean [30d]      # delete your generations older than that (14d), and what nothing uses
+smx os clean [30d]
 ```
 
 The OS commands take `--try` (only until the next reboot) or `--on-reboot`

@@ -21,6 +21,7 @@ let
     text = ''
       system=${pkgs.stdenv.hostPlatform.system}
       smx_eval=${./smx-eval.nix}
+      allow_unfree=${if config.nixpkgs.config.allowUnfree or false then "1" else ""}
     '' + builtins.readFile ./smx.sh;
   };
 in
