@@ -47,6 +47,8 @@
           # programs.git.settings.pull.rebase = false;
           # programs.git.settings.alias.co = "checkout";
           # programs.git.ignores = [ ".envrc" ];
+          # Adopt tweaks made in Noctalia's Settings (niri sessions):
+          # smudgenix.noctalia.settings.bar.main.position = "bottom";
         })
       ];
     };

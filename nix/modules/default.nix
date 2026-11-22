@@ -10,6 +10,7 @@
     ./dev.nix
     ./ai.nix
     ./apps.nix
+    ./noctalia.nix
   ];
 
   options.smudgenix = {
