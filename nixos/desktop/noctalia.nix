@@ -10,20 +10,63 @@ let
   format = pkgs.formats.toml { };
   noctalia = config.programs.noctalia.package;
 
+  theme = import ../../theme pkgs;
+
   msg = args: { action = "spawn ${lib.concatMapStringsSep " " builtins.toJSON ([ "noctalia" "msg" ] ++ args)}"; };
+
+  # The smudge theme as a Noctalia palette (dark only).
+  palette = with theme.colors; {
+    version = 2;
+    base = "smudgenix";
+    dark = {
+      primary = theme.accent;
+      on_primary = base00;
+      secondary = base05;
+      on_secondary = base00;
+      tertiary = base0F;
+      on_tertiary = base00;
+      error = base08;
+      on_error = base00;
+      surface = base00;
+      on_surface = base05;
+      surface_container = base01;
+      on_surface_variant = base04;
+      outline_variant = base02;
+      shadow = "#000000";
+      hover = base02;
+      on_hover = base06;
+      terminal = theme.terminal // {
+        cursor = base05;
+        cursor_text = base00;
+        selection_bg = base02;
+        selection_fg = base06;
+      };
+    };
+  };
 
   defaults = {
     shell = {
       offline_mode = true; # no weather, exchange rates, community palettes, ...
       polkit_agent = true;
+      font_family = theme.fonts.sans.name;
+      corner_radius_scale = 0.5;
+      settings_show_advanced = false;
+      launcher = {
+        layout = "simple";
+        show_app_origin_indicator = false;
+        fetch_exchange_rates = false;
+      };
     };
 
     theme = {
       mode = "dark";
+      source = "custom";
+      custom_palette = theme.name;
       templates.enable_community_templates = false;
     };
 
     wallpaper = {
+      default.path = "${theme.wallpaper}";
       transition = [ "fade" ];
       transition_duration = 600;
     };
@@ -35,7 +78,20 @@ let
       screen-off = { enabled = true; timeout = 900; };
     };
 
+    control_center = {
+      hidden_tabs = [ "calendar" "weather" "screen-time" ];
+      calendar.show_events_card = false;
+      media.show_visualizer = false;
+    };
+
+    # A thin bar, flush with the top edge.
     bar.main = {
+      thickness = 28;
+      radius = 0;
+      margin_edge = 0;
+      margin_ends = 0;
+      shadow = false;
+      compositor_blur = false;
       start = [ "workspaces" ];
       center = [ "clock" ];
       end = [ "tray" "notifications" "network" "bluetooth" "volume" "brightness" "battery" "control-center" "session" ];
@@ -43,8 +99,9 @@ let
   };
 
   configDir = pkgs.runCommand "noctalia-config" { } ''
-    mkdir -p $out
+    mkdir -p $out/palettes
     cp ${format.generate "config.toml" cfg.settings} $out/config.toml
+    cp ${pkgs.writeText "palette.json" (builtins.toJSON palette)} $out/palettes/${theme.name}.json
     # Unknown or mistyped settings are only warnings to Noctalia; fail on them.
     report=$(HOME=$TMPDIR NOCTALIA_CONFIG_HOME=$out ${lib.getExe noctalia} config validate $out/config.toml 2>&1)
     echo "$report"
