@@ -13,7 +13,7 @@ in
   options.smudgenix.noctalia.settings = lib.mkOption {
     inherit ((pkgs.formats.toml { })) type;
     default = { };
-    example = { bar.main.position = "bottom"; };
+    example = { bar.default.position = "bottom"; };
     description = "Noctalia settings to apply over the system's defaults.";
   };
 

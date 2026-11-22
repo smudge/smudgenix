@@ -48,7 +48,7 @@
           # programs.git.settings.alias.co = "checkout";
           # programs.git.ignores = [ ".envrc" ];
           # Adopt tweaks made in Noctalia's Settings (niri sessions):
-          # smudgenix.noctalia.settings.bar.main.position = "bottom";
+          # smudgenix.noctalia.settings.bar.default.position = "bottom";
         })
       ];
     };

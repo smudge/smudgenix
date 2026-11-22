@@ -47,7 +47,7 @@
               # defaultSession = "niri";
               # keyRepeat = { delay = 200; rate = 40; };
               # binds."Mod+T" = ''spawn "alacritty"'';
-              # noctalia.settings.bar.main.position = "bottom";
+              # noctalia.settings.bar.default.position = "bottom";
             };
             # Default apps (installed, and set as defaults for their files):
             # apps = {

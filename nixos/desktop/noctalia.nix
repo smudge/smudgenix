@@ -85,7 +85,7 @@ let
     };
 
     # A thin bar, flush with the top edge.
-    bar.main = {
+    bar.default = {
       thickness = 28;
       radius = 0;
       margin_edge = 0;
@@ -99,13 +99,18 @@ let
   };
 
   configDir = pkgs.runCommand "noctalia-config" { } ''
-    mkdir -p $out/palettes
-    cp ${format.generate "config.toml" cfg.settings} $out/config.toml
-    cp ${pkgs.writeText "palette.json" (builtins.toJSON palette)} $out/palettes/${theme.name}.json
-    # Unknown or mistyped settings are only warnings to Noctalia; fail on them.
-    report=$(HOME=$TMPDIR NOCTALIA_CONFIG_HOME=$out ${lib.getExe noctalia} config validate $out/config.toml 2>&1)
+    # (Noctalia reads $NOCTALIA_CONFIG_HOME/noctalia/.)
+    mkdir -p $out/noctalia/palettes
+    cp ${format.generate "config.toml" cfg.settings} $out/noctalia/config.toml
+    cp ${pkgs.writeText "palette.json" (builtins.toJSON palette)} $out/noctalia/palettes/${theme.name}.json
+
+    # Check the config the way the shell loads it, failing on unknown or
+    # mistyped settings (only warnings to Noctalia), and that it loads at all.
+    export HOME=$TMPDIR NOCTALIA_CONFIG_HOME=$out
+    report=$(${lib.getExe noctalia} config validate 2>&1)
     echo "$report"
     ! grep -qE '^(WARN|ERROR)' <<< "$report"
+    ${lib.getExe noctalia} config export | grep -qF 'custom_palette = "${theme.name}"'
   '';
 in
 {
