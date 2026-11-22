@@ -1,6 +1,7 @@
 # niri, a scrollable-tiling Wayland compositor. Its config is generated here
-# (and validated at build time) and read from /etc/niri/config.kdl, never
-# from ~/.config/niri.
+# (and validated at build time) and read from /etc/niri/config.kdl, then
+# from each user's ~/.config/niri/smudgenix.kdl: the overrides their home
+# flake writes (see ../../nix/modules/desktop.nix), if any.
 { config, lib, pkgs, ... }:
 
 let
@@ -9,33 +10,12 @@ let
   theme = import ../../theme pkgs;
   filePickerId = "smudgenix.filepicker";
 
-  kdlValue = v:
-    if lib.isBool v then lib.boolToString v
-    else if lib.isInt v then toString v
-    else builtins.toJSON v;
-
-  bind = key: value: let
-    b = if lib.isString value then { action = value; } else value;
-    opts = lib.mapAttrsToList (k: v: " ${k}=${kdlValue v}") (removeAttrs b [ "action" ]);
-  in "    ${key}${lib.concatStrings opts} { ${b.action}; }";
-
-  binds = lib.concatStringsSep "\n"
-    (lib.mapAttrsToList bind (lib.filterAttrs (_: v: v != null) desktop.binds));
+  kdl = import ./niri-kdl.nix { inherit lib; };
 
   configFile = pkgs.writeText "niri-config.kdl" ''
     input {
-        keyboard {
-            repeat-delay ${toString desktop.keyRepeat.delay}
-            repeat-rate ${toString desktop.keyRepeat.rate}
-        }
-        touchpad {
-            // Click by pressing down, unless `touchpad.tapToClick`.
-            ${lib.optionalString desktop.touchpad.tapToClick "tap"}
-            natural-scroll
-            // Two-finger click to right-click, rather than the bottom-right
-            // corner (as GNOME does). Touchpads with buttons keep them.
-            click-method "clickfinger"
-        }
+        ${kdl.nested (kdl.keyboard desktop.keyRepeat)}
+        ${kdl.nested (kdl.touchpad { tap = desktop.touchpad.tapToClick; })}
     }
 
     layout {
@@ -94,10 +74,10 @@ let
         default-window-height { proportion 0.7; }
     }
 
-    binds {
-    ${binds}
-    }
+    ${kdl.binds (lib.filterAttrs (_: v: v != null) desktop.binds)}
     ${cfg.extraConfig}
+
+    include optional=true "${kdl.homeFile}"
   '';
 
   validatedConfig = pkgs.runCommand "niri-config.kdl" { } ''

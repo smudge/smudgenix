@@ -49,8 +49,12 @@
           # programs.git.settings.pull.rebase = false;
           # programs.git.settings.alias.co = "checkout";
           # programs.git.ignores = [ ".envrc" ];
-          # Adopt tweaks made in Noctalia's Settings (niri sessions):
-          # smudgenix.noctalia.settings.bar.default.position = "bottom";
+          # Your own desktop settings, over the OS's (niri sessions):
+          # smudgenix.desktop.touchpad.tapToClick = true;
+          # smudgenix.desktop.keyRepeat = { delay = 250; rate = 30; };
+          # smudgenix.desktop.binds."Mod+T" = ''spawn "alacritty"'';
+          # And tweaks made in Noctalia's Settings:
+          # smudgenix.desktop.noctalia.settings.bar.default.position = "bottom";
         })
       ];
     };

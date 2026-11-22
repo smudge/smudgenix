@@ -117,9 +117,7 @@ let
     "Mod+Shift+P" = "power-off-monitors";
   };
 
-  bindOption = lib.types.either lib.types.str (lib.types.attrsOf (lib.types.oneOf [
-    lib.types.str lib.types.bool lib.types.int
-  ]));
+  bindOption = (import ./niri-kdl.nix { inherit lib; }).bindType;
 in
 {
   options.smudgenix.desktop.binds = lib.mkOption {

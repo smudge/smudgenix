@@ -88,6 +88,11 @@ The OS commands take `--try` (only until the next reboot) or `--on-reboot`
 (from the next reboot). After a revert, automatic updates wait until the next
 `update` or `config apply`.
 
+The OS sets everyone's defaults, and each home can change the desktop's
+for itself: `smx config set desktop.touchpad.tapToClick true`, or keyboard
+repeat, keybinds (`desktop.binds`) and Noctalia's settings
+(`desktop.noctalia.settings`). Unset, they're the OS's.
+
 `config set` writes `smudgenix.toml`, next to the flake (which reads it with
 `settings = ./smudgenix.toml;`). Its keys are `smudgenix.*` options, checked
 against their types, and they win over the same options set in `flake.nix`.

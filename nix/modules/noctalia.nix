@@ -6,11 +6,16 @@
 { config, pkgs, lib, ... }:
 
 let
-  cfg = config.smudgenix.noctalia;
+  cfg = config.smudgenix.desktop.noctalia;
   declared = pkgs.writeText "noctalia-settings.json" (builtins.toJSON cfg.settings);
 in
 {
-  options.smudgenix.noctalia.settings = lib.mkOption {
+  # (Named like the OS's `smudgenix.desktop.noctalia.settings`.)
+  imports = [
+    (lib.mkRenamedOptionModule [ "smudgenix" "noctalia" "settings" ] [ "smudgenix" "desktop" "noctalia" "settings" ])
+  ];
+
+  options.smudgenix.desktop.noctalia.settings = lib.mkOption {
     inherit ((pkgs.formats.toml { })) type;
     default = { };
     example = { bar.default.position = "bottom"; };

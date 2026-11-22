@@ -394,6 +394,13 @@ describe() {
   path=$(key_path "$2")
   info=$(ask "$1" "{ path = builtins.fromJSON ''$path''; }") || exit 1
   if [ "$(jq -r '.error // empty' <<<"$info")" = unknown ]; then
+    # Maybe it's the other side's.
+    other=$([ "$1" = os ] && echo home || echo os)
+    if [ -f "$(flake_of "$other")/flake.nix" ] \
+      && elsewhere=$(config_attr_cache="" ask "$other" "{ path = builtins.fromJSON ''$path''; }" 2>/dev/null) \
+      && [ -z "$(jq -r '.error // empty' <<<"$elsewhere")" ]; then
+      die "$2 is $([ "$other" = os ] && echo "the OS's, shared by every user" || echo "your home's"): see \`$(prefix_of "$other") config get $2\`"
+    fi
     say "there's no setting $2"
     suggestions=$(jq -r '.suggestions | .[0:8] | join("\n  ")' <<<"$info")
     [ -z "$suggestions" ] || echo "Did you mean:"$'\n'"  $suggestions" >&2
@@ -469,6 +476,14 @@ show_value() { jq -r 'if type == "string" then . else tojson end' <<<"$1"; }
 config_get() {
   [ $# = 1 ] || die "usage: $(prefix_of "$scope") config get <key>"
   info=$(describe "$scope" "$1")
+  # Unset in a home: the OS's value applies.
+  if [ "$scope" = home ] && [ "$(jq -c .value <<<"$info")" = null ] && [ -f "$os_flake/flake.nix" ] \
+    && os_info=$(config_attr_cache="" ask os "{ path = builtins.fromJSON ''$(key_path "$1")''; }" 2>/dev/null) \
+    && [ -z "$(jq -r '.error // empty' <<<"$os_info")" ]; then
+    show_value "$(jq -c .value <<<"$os_info")"
+    [ ! -t 1 ] || echo "  (the OS's; unset here)" >&2
+    return
+  fi
   show_value "$(jq -c .value <<<"$info")"
   if [ -t 1 ]; then
     jq -r '"  (\(if .origin == "default" then "the default" else "from \(.origin)" end); \(.type); default \(.default))"' <<<"$info" >&2
@@ -477,7 +492,7 @@ config_get() {
 
 config_list() {
   if [ "${1:-}" = --all ]; then
-    ask "$scope" '{ list = true; }' | jq -r '.[] | "\(.key) = \(.value | if type == "string" then . else tojson end | .[0:70])\(if .origin == "default" then "" else "  (\(.origin))" end)"'
+    ask "$scope" '{ list = true; }' | jq -r '.[] | "\(.key) = \(.value | if . == null then "(unset)" elif type == "string" then . else tojson end | .[0:70])\(if .origin == "default" then "" else "  (\(.origin))" end)"'
     return
   fi
   [ $# = 0 ] || die "usage: $(prefix_of "$scope") config list [--all]"
@@ -663,7 +678,7 @@ config_browse() {
     say "reading the settings…"
     ask "$scope" '{ list = true; }' > "$list" || exit 1
     # shellcheck disable=SC2016
-    key=$(jq -r '.[] | "\(.key)\t\(.value | if type == "string" then . else tojson end | .[0:60])\t\(if .origin == "default" then "" else .origin end)"' "$list" \
+    key=$(jq -r '.[] | "\(.key)\t\(.value | if . == null then "(unset)" elif type == "string" then . else tojson end | .[0:60])\t\(if .origin == "default" then "" else .origin end)"' "$list" \
       | awk -F'\t' '{ printf "%-36s %-62s %s\n", $1, $2, $3 }' \
       | fzf --no-sort --reverse --prompt "$(prefix_of "$scope") config> " \
           --header "Enter: change   Esc: done" \

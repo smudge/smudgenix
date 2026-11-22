@@ -10,6 +10,7 @@
     ./dev.nix
     ./ai.nix
     ./apps.nix
+    ./desktop.nix
     ./noctalia.nix
     ./theme.nix
   ];
