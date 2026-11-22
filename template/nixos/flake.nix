@@ -49,6 +49,15 @@
               # binds."Mod+T" = ''spawn "alacritty"'';
               # noctalia.settings.bar.main.position = "bottom";
             };
+            # Default apps (installed, and set as defaults for their files):
+            # apps = {
+            #   browser = pkgs.firefox;
+            #   terminal = pkgs.alacritty;
+            #   fileManager = pkgs.yazi; # e.g. pkgs.nemo for a graphical one
+            #   imageViewer = pkgs.imv;
+            #   pdfViewer = pkgs.papers; # default: the browser
+            #   filePicker = "gtk"; # in niri (default: "yazi")
+            # };
             # Daily auto-update time, in `time.timeZone` (or any systemd
             # calendar spec via `autoUpdate.dates`):
             # autoUpdate.time = "04:00";
