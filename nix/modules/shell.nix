@@ -12,12 +12,6 @@
       cat = "bat --paging=never --style=plain";
       du = "ncdu --color dark -rr -x --exclude .git --exclude node_modules";
     };
-    initExtra = ''
-      if type tmux &>/dev/null; then
-        if [ "$TERM" == "xterm-256color" ] || [ "$TERM" == "alacritty" ]; then
-          [ -z "$TMUX"  ] && { exec tmux new-session && exit; }
-        fi
-      fi
-    '';
+    # (Terminals start in tmux; see ./tmux.nix.)
   };
 }

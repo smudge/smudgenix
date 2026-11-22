@@ -1,6 +1,35 @@
 { pkgs, ... }:
 
+let
+  # Every terminal shares one tmux session ("main"), each in its own grouped
+  # session so it can show its own window. A new terminal picks up a window
+  # no other terminal is showing (e.g. one whose terminal was closed), or
+  # opens a new one; `exit` closes a window for good.
+  attach = pkgs.writeShellApplication {
+    name = "tmux-attach";
+    text = ''
+      tmux has-session -t main 2>/dev/null || tmux new-session -d -s main
+      shown=$(tmux list-clients -F '#{window_id}')
+      free=$(tmux list-windows -t main -F '#{window_id}' | grep -vxF -e "$shown" | head -n1 || true)
+      if [ -n "$free" ]; then
+        exec tmux new-session -t main \; set-option destroy-unattached on \; select-window -t "$free"
+      else
+        exec tmux new-session -t main \; set-option destroy-unattached on \; new-window
+      fi
+    '';
+  };
+in
 {
+  home.packages = [ attach ];
+
+  programs.bash.initExtra = ''
+    if type tmux &>/dev/null && [ -z "$TMUX" ]; then
+      if [ "$TERM" == "xterm-256color" ] || [ "$TERM" == "alacritty" ]; then
+        exec tmux-attach
+      fi
+    fi
+  '';
+
   programs.tmux = {
     enable = true;
     plugins = with pkgs.tmuxPlugins; [

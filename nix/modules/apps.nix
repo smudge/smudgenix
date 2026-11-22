@@ -8,14 +8,12 @@ lib.mkIf config.smudgenix.apps.enable {
     obsidian
   ];
 
-  # (Colors & font family come from ./theme.nix.)
+  # (Colors & font family come from ./theme.nix.) No custom keybinds: Super
+  # belongs to the window manager, Ctrl+hjkl to tmux/nvim, and alacritty's
+  # defaults cover the rest (Ctrl+Shift+C/V, Ctrl+=/-/0).
   programs.alacritty = {
     enable = true;
-    settings = let
-      # Send tmux's prefix (C-b) and then a key.
-      prefix = builtins.fromJSON ''"\u0002"'';
-      tmux = key: mods: chars: { inherit key mods; chars = prefix + chars; };
-    in {
+    settings = {
       font = {
         size = 14;
         offset.x = -1;
@@ -26,28 +24,6 @@ lib.mkIf config.smudgenix.apps.enable {
         title = "Terminal";
         padding = { x = 6; y = 4; };
       };
-      keyboard.bindings = [
-        (tmux "T" "Command" "c")         # new window
-        (tmux "D" "Command" "%")         # split side-by-side
-        (tmux "D" "Command|Shift" "\"")   # split stacked
-        (tmux "W" "Command" "x")         # close pane
-        (tmux "H" "Command" "p")         # previous window
-        (tmux "L" "Command" "n")         # next window
-        (tmux "J" "Command" "J")
-        (tmux "K" "Command" "K")
-        (tmux "H" "Control|Shift" "h")   # move between panes
-        (tmux "J" "Control|Shift" "j")
-        (tmux "K" "Control|Shift" "k")
-        (tmux "L" "Control|Shift" "l")
-        { key = "Key0"; mods = "Command"; action = "ResetFontSize"; }
-        { key = "Equals"; mods = "Command"; action = "IncreaseFontSize"; }
-        { key = "Plus"; mods = "Command"; action = "IncreaseFontSize"; }
-        { key = "Minus"; mods = "Command"; action = "DecreaseFontSize"; }
-        { key = "V"; mods = "Command"; action = "Paste"; }
-        { key = "C"; mods = "Command"; action = "Copy"; }
-        { key = "Q"; mods = "Command"; action = "Quit"; }
-        { key = "F"; mods = "Command|Control"; action = "ToggleFullscreen"; }
-      ];
     };
   };
 
