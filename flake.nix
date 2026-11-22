@@ -6,6 +6,7 @@
 #   ├─ ./nix          (userland home-manager config, for any Nix-enabled home)
 #   │   ├─ default.nix
 #   │   └─ modules/
+#   ├─ ./checks       (example host & home, built by `nix flake check`)
 #   └─ ./template
 #       ├─ nixos/     (per-host, uncommitted /etc/nixos flake)
 #       └─ home/      (per-home, uncommitted ~/.config/home-manager flake)
@@ -42,6 +43,8 @@
     # the opinionated defaults manually.
     lib.mkHome = home.mkHome;
     homeModules.default = home.homeModules.default;
+
+    checks = import ./checks { inherit self nixpkgs; };
 
     templates = {
       # cd /etc/nixos && sudo nix flake init -t github:smudge/smudgenix
