@@ -19,19 +19,17 @@ let
     fi
   '';
 
-  # Builds & activates the per-home flake in ~/.config/home-manager,
-  # without depending on a (possibly version-mismatched) home-manager CLI.
+  # Runs `smx <command>` on the per-home flake in ~/.config/home-manager.
   # Skips (with a desktop notification) while the flake still has unfilled
   # @placeholders@, e.g. a git identity the bootstrap could not fill in.
-  activate = ''
+  smx = command: ''
     cd "$HOME/.config/home-manager"
     if grep -q '"@[A-Za-z]*@"' flake.nix; then
       notify-send --app-name=smudgenix "Finish setting up home-manager" \
         "Fill in the @placeholders@ in ~/.config/home-manager/flake.nix; it is applied on the next update." || true
       exit 0
     fi
-    out=$(nix build --no-link --print-out-paths ".#homeConfigurations.\"$USER\".activationPackage")
-    HOME_MANAGER_BACKUP_EXT=hm-bak "$out/activate"
+    ${config.system.build.smx}/bin/smx ${command}
   '';
 
   common = {
@@ -98,20 +96,21 @@ in
             sed -i${fillGit} flake.nix
           fi
         ''}
-        ${activate}
+        ${smx "config apply"}
       '';
     };
 
     # Keep userland current with whatever has been pushed upstream.
     systemd.user.services.home-manager-auto-update = lib.recursiveUpdate common {
       description = "Update & apply per-home home-manager flake";
-      unitConfig.ConditionPathExists = "%h/.config/home-manager/flake.nix";
+      # (Paused while you've reverted to an earlier generation.)
+      unitConfig.ConditionPathExists = [
+        "%h/.config/home-manager/flake.nix"
+        "!%S/smudgenix/home-reverted"
+      ];
       script = ''
         set -euo pipefail
-        ${githubToken}
-        cd "$HOME/.config/home-manager"
-        nix flake update
-        ${activate}
+        ${smx "update"}
       '';
     };
     # ...and catch up right after each system switch, since homes follow the

@@ -4,11 +4,11 @@
 # generated hardware-configuration.nix, and holds everything specific to this
 # machine. Apply with:
 #
-#   sudo nixos-rebuild switch
+#   smx os config apply
 #
 # Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   smx upgrade
+#   smx os update
 
 {
   description = "Per-host NixOS config";

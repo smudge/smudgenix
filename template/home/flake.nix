@@ -7,11 +7,11 @@
 #
 # then fill in the @placeholders@. Apply with:
 #
-#   home-manager switch
+#   smx config apply
 #
 # Pull in upstream changes (regenerating flake.lock from scratch) with:
 #
-#   smx home update
+#   smx update
 
 {
   description = "Per-home home-manager config";

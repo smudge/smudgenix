@@ -5,8 +5,8 @@ small, uncommitted per-host flake; user-level (sudo-free) home-manager config
 lives in a small, uncommitted per-home flake. Both build on this repo.
 
 ```
-github:smudge/smudgenix ─┬─► /etc/nixos/flake.nix              (per-host)  → sudo nixos-rebuild switch
-                         └─► ~/.config/home-manager/flake.nix  (per-home)  → home-manager switch
+github:smudge/smudgenix ─┬─► /etc/nixos/flake.nix              (per-host)  → smx os config apply
+                         └─► ~/.config/home-manager/flake.nix  (per-home)  → smx config apply
 ```
 
 ## NixOS
@@ -63,16 +63,28 @@ Updates are driven by what is pushed upstream:
   `~/.config/home-manager/flake.lock` and re-applies right after each system
   switch (picking up the system's new smudgenix), and daily.
 
-To update manually:
+## smx
+
+`smx`, installed for every user, works on your home, and never needs sudo.
+`smx os` works on the OS, shared by every user, and asks for sudo only to
+change it. `smx help` and `smx os help` list everything.
 
 ```bash
-smx upgrade      # regenerates /etc/nixos/flake.lock, then switches (with sudo)
-smx home update  # same, for your home flake
+smx update          # get the latest (the OS's smudgenix) for your home, and apply it
+smx config apply    # apply your edits to ~/.config/home-manager/flake.nix
+smx history         # your home's generations
+smx revert [<gen>]  # back to the previous generation, or to <gen>
+
+smx os update       # regenerate /etc/nixos/flake.lock, and apply it
+smx os config apply # apply your edits to /etc/nixos/flake.nix
+smx os revert [<gen>]
 ```
 
-`smx` is installed for every user (`smx help` lists its commands). Both
-commands, and the daily home update, use your `gh` login, if any, to avoid
-GitHub rate limits.
+The OS commands take `--try` (only until the next reboot) or `--on-reboot`
+(from the next reboot). After a revert, automatic updates wait until the next
+`update` or `config apply`.
 
-For local iteration, point either per-host flake's input at a checkout with
-`path:/path/to/checkout` instead of the GitHub URL.
+Updates use your `gh` login, if any, to avoid GitHub rate limits.
+
+For local iteration, `config apply --local <checkout>` uses a smudgenix
+checkout instead of the locked one.

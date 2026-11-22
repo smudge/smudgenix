@@ -37,6 +37,9 @@ in
     # Track the per-host flake, refreshing its lock to whatever is upstream.
     systemd.services.nixos-upgrade.preStart =
       "${config.nix.package}/bin/nix flake update --flake /etc/nixos";
+    # ...except while an admin has reverted it to an earlier generation (with
+    # `smx os revert`).
+    systemd.services.nixos-upgrade.unitConfig.ConditionPathExists = "!/var/lib/smudgenix/os-reverted";
 
     # Without auto-reboot, notify the primary user (once per system generation)
     # when the installed system needs a reboot: a new kernel, initrd or kernel
