@@ -108,6 +108,19 @@ in
         ${activate}
       '';
     };
+    # ...and catch up right after each system switch, since homes follow the
+    # system's smudgenix. (Path units can't watch the /run/current-system
+    # symlink being swapped, so activation also writes it to a plain file.)
+    system.activationScripts.smudgenix-current-system = ''
+      mkdir -p /run/smudgenix
+      readlink -f "$systemConfig" > /run/smudgenix/current-system
+    '';
+    systemd.user.paths.home-manager-auto-update = {
+      description = "Update per-home home-manager flake after a system switch";
+      wantedBy = [ "default.target" ];
+      unitConfig.ConditionUser = cfg.name;
+      pathConfig.PathChanged = "/run/smudgenix/current-system";
+    };
     systemd.user.timers.home-manager-auto-update = {
       wantedBy = [ "timers.target" ];
       timerConfig = {

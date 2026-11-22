@@ -57,8 +57,9 @@ Updates are driven by what is pushed upstream:
   systemd calendar spec given as `smudgenix.autoUpdate.dates`.
   It never reboots unless `smudgenix.autoUpdate.reboot = true`; instead, the
   primary user gets a desktop notification when an update needs a reboot.
-- `home-manager-auto-update.timer` (user) refreshes
-  `~/.config/home-manager/flake.lock` and re-applies daily.
+- `home-manager-auto-update` (user) refreshes
+  `~/.config/home-manager/flake.lock` and re-applies right after each system
+  switch (picking up the system's new smudgenix), and daily.
 
 To update manually:
 
