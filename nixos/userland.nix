@@ -27,7 +27,7 @@ let
     cd "$HOME/.config/home-manager"
     if grep -q '"@[A-Za-z]*@"' flake.nix; then
       notify-send --app-name=smudgenix "Finish setting up home-manager" \
-        "Fill in the @placeholders@ in ~/.config/home-manager/flake.nix; it is applied on the next daily update." || true
+        "Fill in the @placeholders@ in ~/.config/home-manager/flake.nix; it is applied on the next update." || true
       exit 0
     fi
     out=$(nix build --no-link --print-out-paths ".#homeConfigurations.\"$USER\".activationPackage")
@@ -37,7 +37,8 @@ let
   common = {
     path = [ config.nix.package pkgs.git pkgs.gnused pkgs.gnugrep pkgs.coreutils pkgs.libnotify pkgs.gh ];
     unitConfig = {
-      ConditionUser = cfg.name;
+      # Every regular (non-system) user gets their own home.
+      ConditionUser = "!@system";
     };
     serviceConfig = {
       Type = "oneshot";
@@ -57,12 +58,12 @@ in
       name = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Git name to pre-fill in the generated home flake.";
+        description = "Git name to pre-fill in the primary user's generated home flake.";
       };
       email = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
         default = null;
-        description = "Git email to pre-fill in the generated home flake.";
+        description = "Git email to pre-fill in the primary user's generated home flake.";
       };
     };
   };
@@ -85,13 +86,18 @@ in
         sed -i \
           -e "s|@username@|$USER|g" \
           -e 's|@system@|${system}|g' \
-          -e 's|@stateVersion@|${config.system.nixos.release}|g'${fillGit} \
+          -e 's|@stateVersion@|${config.system.nixos.release}|g' \
           -e '/^ *smudgenix\.url = /,/^ *# smudgenix\.follows = /c\
             # Follow the system smudgenix (and its nixpkgs), so home and\
             # system update in lockstep:\
             system.url = "path:/etc/nixos";\
             smudgenix.follows = "system/nixos";' \
           flake.nix
+        ${lib.optionalString (fillGit != "") ''
+          if [ "$USER" = ${lib.escapeShellArg cfg.name} ]; then
+            sed -i${fillGit} flake.nix
+          fi
+        ''}
         ${activate}
       '';
     };
@@ -118,7 +124,7 @@ in
     systemd.user.paths.home-manager-auto-update = {
       description = "Update per-home home-manager flake after a system switch";
       wantedBy = [ "default.target" ];
-      unitConfig.ConditionUser = cfg.name;
+      unitConfig.ConditionUser = "!@system";
       pathConfig.PathChanged = "/run/smudgenix/current-system";
     };
     systemd.user.timers.home-manager-auto-update = {

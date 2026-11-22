@@ -22,14 +22,16 @@ sudoedit /etc/nixos/flake.nix
 sudo nixos-rebuild switch
 ```
 
-On first login, a user service generates `~/.config/home-manager/flake.nix`
-from the `smudgenix.user.homeTemplate` template (default:
-`github:smudge/smudgenix#home`) and applies it. It never clones or
-overwrites anything; edit that file for per-home overrides. Its git identity is
-pre-filled from `smudgenix.user.git` if set; otherwise you are notified to fill
-it in, and it is applied on the next daily update. The generated flake
-follows the system's smudgenix (via `/etc/nixos/flake.lock`), so home and
-system share one smudgenix and nixpkgs, and update in lockstep.
+On each user's first login, a user service generates
+`~/.config/home-manager/flake.nix` from the `smudgenix.user.homeTemplate`
+template (default: `github:smudge/smudgenix#home`) and applies it, so every
+user manages their own home without sudo. It never clones or overwrites
+anything; edit that file for per-home overrides. The primary user's git
+identity is pre-filled from `smudgenix.user.git` if set; otherwise you are
+notified to fill it in, and it is applied on the next update. The generated
+flake follows the system's smudgenix (via `/etc/nixos/flake.lock`), so home
+and system share one smudgenix and nixpkgs, and update in lockstep.
+
 
 Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 `nix-shell -p`) resolves to the system's flake-pinned nixpkgs.
