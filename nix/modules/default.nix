@@ -7,7 +7,6 @@
     ./shell.nix
     ./tmux.nix
     ./nvim.nix
-    ./theme.nix
     ./dev.nix
     ./ai.nix
     ./apps.nix
