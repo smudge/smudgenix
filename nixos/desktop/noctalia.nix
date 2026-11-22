@@ -72,7 +72,12 @@ let
       transition_duration = 600;
     };
 
-    lockscreen.transition = [ "fade" ];
+    lockscreen = {
+      transition = [ "fade" ];
+      # Unlock with a fingerprint, where there's a reader. (Noctalia reads it
+      # itself, not via PAM: the login PAM service is password-only.)
+      fingerprint = config.services.fprintd.enable;
+    };
 
     idle.behavior = {
       lock = { enabled = true; timeout = 600; };

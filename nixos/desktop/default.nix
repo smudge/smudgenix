@@ -67,6 +67,9 @@ in
     # Secrets (saved passwords & keys, for libsecret apps) in oo7, unlocked
     # with the login password. (It also adopts gnome-keyring's keyrings.)
     services.oo7.enable = true;
+    # A fingerprint can't unlock it, so logging in takes the password. (The
+    # lock screen reads fingerprints itself; see ./noctalia.nix.)
+    security.pam.services.login.fprintAuth = false;
     services.gnome.gnome-keyring.enable = false;
     xdg.portal.config.niri."org.freedesktop.impl.portal.Secret" = lib.mkForce "oo7-portal";
 
