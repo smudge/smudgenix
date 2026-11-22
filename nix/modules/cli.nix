@@ -13,7 +13,6 @@
   ]
   ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
     wl-clipboard
-    xclip
   ];
 
   programs.autojump.enable = true;

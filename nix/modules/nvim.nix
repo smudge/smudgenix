@@ -20,7 +20,6 @@
       providers =
         lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           wl-copy.enable = true;
-          xclip.enable = true;
         };
     };
     opts = {
