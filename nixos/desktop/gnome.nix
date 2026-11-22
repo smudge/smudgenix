@@ -11,8 +11,6 @@ lib.mkIf config.smudgenix.desktop.gnome.enable {
   environment.gnome.excludePackages = [ pkgs.gnome-tour ];
 
   environment.systemPackages = with pkgs; [
-    gnome-themes-extra
-    adwaita-icon-theme
     papers
 
     gnomeExtensions.appindicator # tray icons

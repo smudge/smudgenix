@@ -4,7 +4,7 @@
 { config, lib, pkgs, ... }:
 
 let
-  apps = config.smudgenix.apps;
+  inherit (config.smudgenix) apps desktop;
 in
 {
   imports = [
@@ -12,7 +12,22 @@ in
   ];
 
   options.smudgenix = {
-    desktop.gnome.enable = lib.mkEnableOption "the GNOME desktop session" // { default = true; };
+    desktop = {
+      gnome.enable = lib.mkEnableOption "the GNOME desktop session" // { default = true; };
+
+      keyRepeat = {
+        delay = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 200;
+          description = "Milliseconds a key is held before it starts repeating.";
+        };
+        rate = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 40;
+          description = "Key repeats per second.";
+        };
+      };
+    };
 
     apps = {
       browser = lib.mkPackageOption pkgs "firefox" { };
@@ -35,14 +50,31 @@ in
       nerd-fonts.symbols-only
     ];
 
-    # Use libsecret and launch gnome-keyring at startup.
+    # Machine-wide defaults for GTK apps & GNOME. Users can still change them
+    # (in GNOME Settings, or via home-manager's `dconf.settings`).
     programs.dconf.enable = true;
+    programs.dconf.profiles.user.databases = [{
+      settings = {
+        "org/gnome/desktop/interface" = {
+          color-scheme = "prefer-dark";
+          gtk-theme = "Adwaita-dark";
+        };
+        "org/gnome/desktop/peripherals/keyboard" = {
+          delay = lib.gvariant.mkUint32 desktop.keyRepeat.delay;
+          repeat-interval = lib.gvariant.mkUint32 (1000 / desktop.keyRepeat.rate);
+        };
+      };
+    }];
+
+    # Use libsecret and launch gnome-keyring at startup.
     programs.seahorse.enable = true;
     services.gnome.gnome-keyring.enable = true;
     security.pam.services.gdm.enableGnomeKeyring = true;
 
-    # Default desktop apps:
+    # GTK themes, libsecret & the default desktop apps:
     environment.systemPackages = [
+      pkgs.gnome-themes-extra # Adwaita-dark for GTK3
+      pkgs.adwaita-icon-theme
       pkgs.libsecret
       apps.browser
       apps.terminal

@@ -8,7 +8,6 @@
     ./tmux.nix
     ./nvim.nix
     ./theme.nix
-    ./keyboard.nix
     ./dev.nix
     ./ai.nix
     ./apps.nix
