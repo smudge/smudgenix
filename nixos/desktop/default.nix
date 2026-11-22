@@ -11,6 +11,7 @@ in
     ./binds.nix
     ./gnome.nix
     ./niri.nix
+    ./noctalia.nix
   ];
 
   options.smudgenix = {
