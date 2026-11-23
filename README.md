@@ -124,6 +124,13 @@ A review that's changed since it was frozen is stale, and can't be accepted
 until you review it again. Tasks live in `~/.local/share/smudgenix/tasks`,
 which agents' commands can't change.
 
+`smx ai verify <task>` (`v` in a review) adds evidence, rather than the
+agent's word: it runs the project's check on exactly the frozen revision, in
+a fresh copy and agents' sandbox (it's their code), and records whether it
+passed, with its log (`e`). The check is guessed from the project's files
+(`nix flake check`, `npm test`, `cargo test`, `go test ./...`, `make check`,
+`pytest`…), or the one you last gave it with `--command "<check>"`.
+
 ## smx
 
 `smx`, installed for every user, works on your home, and never needs sudo.

@@ -80,6 +80,17 @@ local function inspect(task, path)
   noctalia.runInTerminal(command)
 end
 
+-- A review's latest check (smx ai verify), if any, and what it says.
+local function lastCheck(task)
+  local evidence = task and task.review and task.review.evidence or {}
+  local check = evidence[#evidence]
+  if not check then return nil, nil end
+  if check.exit == 0 then return check, "passed" end
+  if check.exit ~= nil then return check, "failed" end
+  if check.interrupted then return check, "interrupted" end
+  return check, "running"
+end
+
 -- --- Threads -----------------------------------------------------------------
 
 -- Your threads (top-level sessions), each with its subagents and its open
@@ -138,7 +149,9 @@ local function turn(thread, children, task)
     local review = task.review or {}
     local files = type(review.files) == "table" and #review.files or review.files or 0
     local spots = #(review.hotspots or {})
+    local _, checked = lastCheck(task)
     return "you", 1, `back: {files} file{files == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
+      .. (checked == "passed" and ", checks pass" or checked == "failed" and ", its check failed" or checked == "running" and ", checking" or "")
       .. (task.stale and " (stale)" or "")
   end
   if thread.unseen then
@@ -360,6 +373,15 @@ local function renderReview(task)
   if task.stale then
     table.insert(rows, ui.label({ text = "Stale: it's changed since this was frozen. p reviews it again.", fontSize = 12, color = "tertiary" }))
   end
+  -- Evidence (by smx ai, on this revision), apart from what it says.
+  local check, checked = lastCheck(task)
+  local said = ({
+    passed = check and { `✓ Its check passes on this revision: {check.command}`, "secondary" },
+    failed = check and { `✗ Its check failed (exit {check.exit}): {check.command}. e shows its log; v runs it again.`, "error" },
+    interrupted = check and { `Its check was interrupted: {check.command}. v runs it again.`, "tertiary" },
+    running = check and { `Checking: {check.command}…`, "primary" },
+  })[checked or ""] or { "Not checked yet: v runs the project's check on this revision.", "on_surface/0.6" }
+  table.insert(rows, ui.label({ text = said[1], fontSize = 12, color = said[2], maxLines = 2 }))
   if review.outcome and review.outcome.text then
     table.insert(rows, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }))
   end
@@ -394,7 +416,7 @@ local function renderReview(task)
     ui.label({ text = table.concat(summary, "  ·  "), fontSize = 11, color = "on_surface/0.6" }),
     problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "file-" .. fileSelected }, rows),
-    ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  r reply  ·  z park  ·  ← back",
+    ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  v check  ·  e its log  ·  r reply  ·  z park  ·  ← back",
       fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
@@ -620,6 +642,12 @@ function onKey(chord, pressed)
       reviewing = nil
     elseif chord == "p" then
       run({ "smx", "ai", "review", task.session })
+    elseif chord == "v" then
+      run({ "smx", "ai", "verify", task.id, "--json" })
+    elseif chord == "e" then
+      local check = lastCheck(task)
+      if check and check.log then noctalia.runInTerminal("less +G " .. quote(check.log)) end
+      return
     elseif chord == "r" then
       reviewing = nil
       for _, session in agents.sessions or {} do
