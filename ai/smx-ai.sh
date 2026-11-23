@@ -28,8 +28,8 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
-  status [--json]         What agents are doing now (--json: and recent
-                          sessions too)
+  status [--json]         What agents are doing now, or have open (--json:
+                          and recent sessions too)
   open <session>          Show a session: its TUI's window, or a new one
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
@@ -86,13 +86,24 @@ shape='def shape:
      outcome: ({succeeded: "done", failed: "failed"}[.outcome // ""] // "idle"),
      unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")};'
 
-# Sessions (JSON lines in and out), with what the running ones wait on.
-with_waiting() {
-  local session id
+# Sessions (JSON lines in and out), filled in: their project (the name of
+# their folder's repository, its main checkout's, or else of the folder), their
+# latest reply, and what the running ones wait on.
+filled() {
+  local session id dir running project reply
+  local -A projects=()
   while IFS= read -r session; do
     [ -n "$session" ] || continue
-    if [ "$(jq -r .running <<<"$session")" = true ]; then
-      id=$(jq -r .id <<<"$session")
+    IFS=$'\t' read -r id dir running < <(jq -r '[.id, (.dir // ""), .running] | @tsv' <<<"$session")
+    if [ -z "${projects[$dir]+x}" ]; then
+      project=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && project=${project%/.git} || project=$dir
+      if [ "$project" = "$HOME" ]; then projects[$dir]="~"; else projects[$dir]=$(basename "$project"); fi
+    fi
+    reply=$(server_get "/api/session/$id/message?limit=10&order=desc&type=assistant" \
+      | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) // null' 2>/dev/null) || reply=null
+    session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" \
+      '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r}' <<<"$session")
+    if [ "$running" = true ]; then
       jq -c --argjson p "$(server_get "/api/session/$id/permission" || echo '{"data":[]}')" \
         --argjson f "$(server_get "/api/session/$id/form" || echo '{"data":[]}')" \
         '. + {permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
@@ -103,26 +114,33 @@ with_waiting() {
   done
 }
 
-# The server's state now, as an smx.snapshot: its recent sessions, and any
-# older ones running or finished since anyone looked at them. (Not
-# subagents', whose sessions report to theirs.)
+# The server's state now, as an smx.snapshot: its recent sessions, any older
+# ones running or finished since anyone looked at them, and those ones'
+# subagents' (of the recent ones).
 snapshot() {
   local sessions
-  sessions=$(server_get "/api/session?limit=50" | jq -c "$shape"' [.data[] | select(.parentID == null) | shape]
-    | sort_by(-(.updated // 0)) | to_entries[]
-    | select(.key < 15 or .value.running or .value.unseen) | .value') || return 1
-  with_waiting <<<"$sessions" | jq -cs '{type: "smx.snapshot", sessions: .}'
+  sessions=$(server_get "/api/session?limit=50" | jq -c "$shape"' [.data[] | shape] as $all
+    | ([$all[] | select(.parent == null)] | sort_by(-(.updated // 0)) | to_entries
+       | map(select(.key < 15 or .value.running or .value.unseen) | .value)) as $roots
+    | [$roots, [$all[] | select(.parent != null)]]
+    | until(([.[0][].id] | unique) as $kept | [.[1][] | select(.parent as $p | $kept | index($p))] | length == 0;
+        ([.[0][].id]) as $kept
+        | [.[0] + [.[1][] | select(.parent as $p | $kept | index($p))],
+           [.[1][] | select(.parent as $p | $kept | index($p) | not)]])
+    | .[0][]') || return 1
+  filled <<<"$sessions" | jq -cs '{type: "smx.snapshot", sessions: .}'
 }
 
 # One session, as an smx.session (for one the snapshot didn't have).
 session_event() {
-  server_get "/api/session/$1" | jq -c "$shape"' .data | shape' | with_waiting \
+  server_get "/api/session/$1" | jq -c "$shape"' .data | shape' | filled \
     | jq -c '{type: "smx.session", session: .}'
 }
 
 # The server's events that watch uses.
 watched=(
   session.created session.renamed session.deleted session.archived session.viewed
+  session.text.ended
   session.execution.started session.execution.succeeded session.execution.failed
   session.execution.interrupted permission.asked permission.replied
   form.created form.replied form.cancelled
@@ -142,7 +160,7 @@ connected_events() {
       if [ "$id" != - ] && [[ $known != *" $id "* ]]; then
         known+="$id "
         case "$type" in
-          session.created | session.deleted | session.archived) ;;
+          session.deleted | session.archived) ;;
           *) session_event "$id" || true ;;
         esac
       fi
@@ -155,21 +173,74 @@ server_state() {
   if ctl is-active --quiet "$unit" || ctl is-failed --quiet "$unit"; then echo down; else echo stopped; fi
 }
 
+# opencode's TUIs open now, as an smx.tuis: for each, its session (if it was
+# started with -s), its tmux pane's title (which the TUI sets to "OC | <its
+# session's title>", maybe cut short with "…"), and the processes it's
+# shown through, itself up (so its terminal's among them), if you can see it:
+# not in a tmux window that isn't the current one, or a tmux session with no
+# client.
+tuis() {
+  local procs panes clients pid argv i id
+  procs=$(ps -u "$(id -u)" -o pid=,ppid=)
+  panes=$(tmux list-panes -a -F '#{pane_pid}	#{session_name}	#{window_active}	#{pane_title}' 2>/dev/null || true)
+  clients=$(tmux list-clients -F '#{client_pid}	#{session_name}' 2>/dev/null || true)
+  for pid in $(pgrep -u "$(id -u)" opencode || true); do
+    mapfile -d '' argv < "/proc/$pid/cmdline" 2>/dev/null || continue
+    case "$(basename "${argv[0]:-}")" in opencode | .opencode-wrapped) ;; *) continue ;; esac
+    id=""
+    for ((i = 1; i < ${#argv[@]}; i++)); do
+      case "${argv[i]}" in
+        serve | run | attach | acp | mcp | auth | api | service | models | export | import | stats | upgrade) continue 2 ;;
+        -s | --session) id=${argv[i + 1]:-} ;;
+        --session=*) id=${argv[i]#--session=} ;;
+      esac
+    done
+    printf '%s\t%s\n' "$pid" "$id"
+  done | jq -Rcn --arg procs "$procs" --arg panes "$panes" --arg clients "$clients" '
+    ($procs | split("\n") | map(select(. != "") | [splits(" +") | select(. != "") | tonumber])
+      | map({key: (.[0] | tostring), value: .[1]}) | from_entries) as $parent
+    | def up: [recurse(($parent[tostring] // 1) | select(. > 1))];
+    ($panes | split("\n") | map(select(. != "") | split("\t")
+      | {key: .[0], value: {session: .[1], active: (.[2] == "1"), title: .[3]}}) | from_entries) as $pane
+    | ($clients | split("\n") | map(select(. != "") | split("\t") | {pid: (.[0] | tonumber), session: .[1]})) as $client
+    | {type: "smx.tuis", tuis: [inputs | split("\t") | (.[0] | tonumber) as $pid | ($pid | up) as $up
+        | (first($up[] | $pane[tostring] // empty) // null) as $p
+        | {id: (if .[1] == "" then null else .[1] end),
+           title: ($p.title // null | if . and startswith("OC | ") then .[5:] else null end),
+           seen: (if $p == null then $pid | up
+                  elif $p.active then [$client[] | select(.session == $p.session) | .pid | up[]]
+                  else [] end)}]}'
+}
+
+# watch's TUIs, while it runs: whenever they change (and at first).
+tui_changes() {
+  local now last=""
+  local watcher=$$
+  while [ -e "/proc/$watcher" ]; do
+    now=$(tuis)
+    [ "$now" = "$last" ] || { echo "$now"; last=$now; }
+    sleep 2
+  done
+}
+
 # watch: what agents are doing (see ./normalize.jq), for good: a snapshot, then
 # each change; and while the server's away, that it is (then, once it's back,
 # a snapshot). It retries every few seconds, which costs nothing.
 watch_normalized() {
   local delay=1 last="" state
-  while true; do
-    if connected_events; then delay=1; last=up; fi
-    state=$(server_state)
-    if [ "$state" != "$last" ]; then
-      jq -cn --arg s "$state" '{type: "smx.server", state: $s}'
-      last=$state
-    fi
-    sleep "$delay"
-    delay=$((delay < 5 ? delay * 2 : 5))
-  done | jq -cn --unbuffered -f "$normalize"
+  {
+    tui_changes &
+    while true; do
+      if connected_events; then delay=1; last=up; fi
+      state=$(server_state)
+      if [ "$state" != "$last" ]; then
+        jq -cn --arg s "$state" '{type: "smx.server", state: $s}'
+        last=$state
+      fi
+      sleep "$delay"
+      delay=$((delay < 5 ? delay * 2 : 5))
+    done
+  } | jq -cn --unbuffered -f "$normalize"
 }
 
 watch_command() {
@@ -190,7 +261,7 @@ watch_command() {
 current() {
   local snap
   if [ -n "$(server_url)" ] && snap=$(snapshot) && [ -n "$snap" ]; then
-    jq -cn -f "$normalize" <<<"$snap"
+    { tuis; echo "$snap"; } | jq -cn -f "$normalize"
   else
     jq -cn --arg s "$(server_state)" '{v: 1, type: "server", state: $s}'
   fi
@@ -207,13 +278,13 @@ status() {
     else
       say "OpenCode's server isn't reachable; see \`smx ai doctor\`"
     fi
-  elif [ "$(jq '[.sessions[] | select(.parent == null and (.unseen or (.state | test("^(working|needs-)"))))] | length' <<<"$now")" = 0 ]; then
+  elif [ "$(jq '[.sessions[] | select(.parent == null and (.open or .unseen or (.state | test("^(working|needs-)"))))] | length' <<<"$now")" = 0 ]; then
     echo "${D}No agents at work.${N}"
   else
-    jq -r --arg home "$HOME" '.sessions[] | select(.parent == null and (.unseen or (.state | test("^(working|needs-)"))))
-      | [.state, (if .unseen then "new" else "-" end), .id, (.title // "(untitled)"),
+    jq -r --arg home "$HOME" '.sessions[] | select(.parent == null and (.open or .unseen or (.state | test("^(working|needs-)"))))
+      | [.state, ([if .unseen then "new" else empty end, if .open then "open" else empty end] | join(", ") | if . == "" then "-" else . end), .id, (.title // "(untitled)"),
          ((.dir // "") | if startswith($home) then "~" + .[($home | length):] else . end)] | @tsv' <<<"$now" \
-      | while IFS=$'\t' read -r state unseen id title dir; do
+      | while IFS=$'\t' read -r state flags id title dir; do
           case "$state" in
             working) mark="${A}●${N}" ;;
             needs-*) mark="${Y}▲${N}" ;;
@@ -221,7 +292,7 @@ status() {
             failed) mark="${R}✗${N}" ;;
             *) mark="${D}-${N}" ;;
           esac
-          printf '%s %-16s %s  %s\n' "$mark" "$state$([ "$unseen" = new ] && echo ", new")" "$title" "${D}$dir  $id${N}"
+          printf '%s %-22s %s  %s\n' "$mark" "$state$([ "$flags" = - ] || echo ", $flags")" "$title" "${D}$dir  $id${N}"
         done
   fi
   [ "$(jq -r '.state // "up"' <<<"$now")" != down ] || exit 3

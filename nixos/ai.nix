@@ -26,7 +26,7 @@ let
   smx-ai = pkgs.writeShellApplication {
     name = "smx-ai";
     # (niri, tmux and xdg-terminal-exec: the desktop's own, from PATH.)
-    runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.gnugrep pkgs.gnused pkgs.jq pkgs.gawk pkgs.procps pkgs.util-linux ];
+    runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.gitMinimal pkgs.gnugrep pkgs.gnused pkgs.jq pkgs.gawk pkgs.procps pkgs.util-linux ];
     text = with theme.colors; ''
       opencode=${lib.getExe opencode}
       normalize=${../ai/normalize.jq}

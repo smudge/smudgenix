@@ -1,6 +1,7 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
-# first event) and `smx.server`), smx ai's (v1) out:
+# first event), `smx.tuis` (opencode's TUIs open now) and `smx.server`),
+# smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
@@ -10,25 +11,48 @@
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
 #
-# where <session> is {id, title, dir, parent, updated, state, unseen,
-# permissions, forms}, its state is needs-permission, needs-input, working,
-# done, failed or idle, unseen is whether it's finished since anyone last
-# looked at it, and updated is when (in ms) it last changed, or null.
+# where <session> is {id, title, dir, project, parent, updated, last, open,
+# terminals, state, unseen, permissions, forms}: its state is needs-permission,
+# needs-input, working, done, failed or idle; unseen is whether it's finished
+# since anyone last looked at it; updated is when (in ms) it last changed, or
+# null; last is its latest reply, in a line, or null; open is whether a TUI
+# shows it, and terminals the processes that TUI's on screen through (its
+# terminal's among them), if any; and project is its repository's name, or
+# null.
 #
-# A snapshot has the recent sessions (a few, and any running or unseen).
+# A snapshot has the recent sessions (a few, any running or unseen, and those
+# ones' subagents', whose parent is theirs).
 #
 #   jq -cn --unbuffered -f normalize.jq
 
 def blank($id; $dir):
-  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, permissions: [], forms: []};
+  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, last: null, project: null, permissions: [], forms: []};
 
-def public:
-  {id, title, dir, parent, updated,
+# The TUIs (of these) showing a session.
+def tuis_on($tuis):
+  . as $s
+  | [$tuis[] | select(.id == $s.id
+      or (.id == null and .title != null and $s.title != null
+          and (.title as $t | if ($t | endswith("…")) then $s.title | startswith($t[:-1]) else $s.title == $t end)))];
+
+def public($tuis):
+  tuis_on($tuis) as $on
+  | {id, title, dir, project, parent, updated, last,
+   open: ($on | length > 0), terminals: ([$on[].seen[]] | unique),
    state: (if (.permissions | length) > 0 then "needs-permission"
            elif (.forms | length) > 0 then "needs-input"
            elif .running then "working"
            else .outcome end),
    unseen, permissions, forms};
+
+# A reply, in a line: its whitespace and markup collapsed, cut short.
+def summary:
+  gsub("\\*\\*|`"; "") | gsub("(?<s>^|\\n)#+ (?<h>[^\\n]*?):?(?=\\n|$)"; "\(.s)\(.h):") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")
+  | if length > 240 then .[0:239] + "…" elif length == 0 then null else . end;
+
+# A session as smx ai gives it (smx.snapshot, smx.session).
+def taken:
+  blank(.id; .dir) + . | .last |= (if type == "string" then summary else null end);
 
 def apply($e):
   if $e.type == "session.created" then
@@ -36,6 +60,7 @@ def apply($e):
     | .dir = ($e.data.location.directory // .dir)
     | .parent = ($e.data.parentID // null)
   elif $e.type == "session.renamed" then .title = $e.data.title
+  elif $e.type == "session.text.ended" then .last = ($e.data.text | summary)
   elif $e.type == "session.execution.started" then .running = true | .unseen = false
   elif $e.type == "session.execution.succeeded" then .running = false | .outcome = "done" | .unseen = true
   elif $e.type == "session.execution.failed" then .running = false | .outcome = "failed" | .unseen = true
@@ -57,14 +82,18 @@ def apply($e):
 
 def session_id($e): $e.data.sessionID // $e.data.form.sessionID // null;
 
-foreach inputs as $e ({sessions: {}, emit: []};
+foreach inputs as $e ({sessions: {}, tuis: [], emit: []};
   .emit = []
+  | .tuis as $tuis
   | if $e.type == "smx.snapshot" then
-      .sessions = ($e.sessions | map({key: .id, value: (blank(.id; .dir) + .)}) | from_entries)
-      | .emit = [{v: 1, type: "snapshot", server: "up", sessions: [.sessions[] | public]}]
+      .sessions = ($e.sessions | map({key: .id, value: taken}) | from_entries)
+      | .emit = [{v: 1, type: "snapshot", server: "up", sessions: [.sessions[] | public($tuis)]}]
     elif $e.type == "smx.session" then
-      .sessions[$e.session.id] = (blank($e.session.id; $e.session.dir) + $e.session)
-      | .emit = [{v: 1, type: "session"} + (.sessions[$e.session.id] | public)]
+      .sessions[$e.session.id] = ($e.session | taken)
+      | .emit = [{v: 1, type: "session"} + (.sessions[$e.session.id] | public($tuis))]
+    elif $e.type == "smx.tuis" then
+      .tuis = $e.tuis
+      | .emit = [.sessions[] | select(public($tuis) != public($e.tuis)) | {v: 1, type: "session"} + public($e.tuis)]
     elif $e.type == "smx.server" then
       .emit = [{v: 1, type: "server", state: $e.state}]
       | if $e.state != "up" then .sessions = {} else . end
@@ -76,10 +105,10 @@ foreach inputs as $e ({sessions: {}, emit: []};
       session_id($e) as $id
       | (.sessions[$id] // blank($id; $e.location.directory)) as $before
       | ($before | apply($e)) as $changed
-      | (if ($before | public | del(.updated)) != ($changed | public | del(.updated))
+      | (if ($before | public($tuis) | del(.updated)) != ($changed | public($tuis) | del(.updated))
          then $changed | .updated = ($e.created // .updated) else $changed end) as $after
       | .sessions[$id] = $after
-      | if ($before | public) != ($after | public)
-        then .emit = [{v: 1, type: "session"} + ($after | public)] else . end
+      | if ($before | public($tuis)) != ($after | public($tuis))
+        then .emit = [{v: 1, type: "session"} + ($after | public($tuis))] else . end
     end;
   .emit[])
