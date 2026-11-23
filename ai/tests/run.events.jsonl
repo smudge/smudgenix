@@ -1,13 +1,15 @@
 {"type":"smx.snapshot","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","running":true}]}
-{"type":"session.step.started","data":{"sessionID":"ses_a"}}
-{"type":"session.execution.succeeded","data":{"sessionID":"ses_a"}}
-{"type":"session.viewed","data":{"sessionID":"ses_a","idle":1795397841822}}
-{"type":"session.created","location":{"directory":"/home/example/src/other"},"data":{"sessionID":"ses_b","title":"Update the domains","location":{"directory":"/home/example/src/other"}}}
-{"type":"session.execution.started","data":{"sessionID":"ses_b"}}
-{"type":"permission.asked","data":{"id":"per_1","sessionID":"ses_b","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}}
-{"type":"permission.replied","data":{"sessionID":"ses_b","requestID":"per_1","reply":"once"}}
-{"type":"session.execution.failed","data":{"sessionID":"ses_b"}}
-{"type":"permission.asked","location":{"directory":"/home/example/src/third"},"data":{"id":"per_2","sessionID":"ses_c","action":"edit","resources":["src/main.rs"]}}
+{"created":1795400002000,"type":"session.step.started","data":{"sessionID":"ses_a"}}
+{"created":1795400003000,"type":"session.execution.succeeded","data":{"sessionID":"ses_a"}}
+{"created":1795400004000,"type":"session.viewed","data":{"sessionID":"ses_a","idle":1795397841822}}
+{"created":1795400005000,"type":"session.created","location":{"directory":"/home/example/src/other"},"data":{"sessionID":"ses_b","title":"Update the domains","location":{"directory":"/home/example/src/other"}}}
+{"created":1795400006000,"type":"session.execution.started","data":{"sessionID":"ses_b"}}
+{"created":1795400007000,"type":"permission.asked","data":{"id":"per_1","sessionID":"ses_b","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}}
+{"created":1795400008000,"type":"permission.replied","data":{"sessionID":"ses_b","requestID":"per_1","reply":"once"}}
+{"created":1795400009000,"type":"session.execution.failed","data":{"sessionID":"ses_b"}}
+{"created":1795400010000,"type":"permission.asked","location":{"directory":"/home/example/src/third"},"data":{"id":"per_2","sessionID":"ses_c","action":"edit","resources":["src/main.rs"]}}
 {"type":"smx.server","state":"down"}
 {"type":"smx.server","state":"up"}
 {"type":"smx.snapshot","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","running":true}]}
+{"type":"smx.session","session":{"id":"ses_d","title":"Older work, back at it","dir":"/home/example/src/old","parent":null,"updated":1795300000000,"running":false,"outcome":"done","unseen":false}}
+{"created":1795400020000,"type":"session.execution.started","data":{"sessionID":"ses_d"}}

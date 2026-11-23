@@ -28,7 +28,8 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
-  status [--json]         What agents are doing now
+  status [--json]         What agents are doing now (--json: and recent
+                          sessions too)
   open <session>          Show a session: its TUI's window, or a new one
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
@@ -52,13 +53,16 @@ server_curl() {
   curl -K <(printf 'user = "opencode:%s"\n' "$password") "$@"
 }
 
-# Its event stream, as JSON lines, from now until it ends. (A down server
-# ends it at once.)
+server_get() { server_curl -sf --max-time 10 "$(server_url)$1"; }
+
+# Its event stream, as JSON lines, from now until it ends (at once, if it's
+# down): of these types, or all of them.
 server_events() {
-  local url
+  local url query=""
   url=$(server_url)
   [ -n "$url" ] || return 3
-  server_curl -sfN -H 'Accept: text/event-stream' "$url/api/event" | sed -un 's/^data: //p'
+  if [ "$#" -gt 0 ]; then query="?$(printf 'types=%s&' "$@")"; query=${query%&}; fi
+  server_curl -sfN -H 'Accept: text/event-stream' "$url/api/event$query" | sed -un 's/^data: //p'
 }
 
 # --- watch --------------------------------------------------------------------
@@ -72,48 +76,83 @@ watch_raw() {
   done
 }
 
-# The server's state now, as an smx.snapshot (see ./normalize.jq): its
-# sessions that are running (with what they're waiting on), or have finished
-# since anyone looked at them. (Of the recent ones, and not subagents', whose
-# sessions report to theirs.)
-snapshot() {
-  local url sessions session id
-  url=$(server_url)
-  get() { server_curl -sf --max-time 10 "$url$1"; }
-  sessions=$(get "/api/session?limit=50" | jq -c '.data[]
-    | select(.parentID == null)
-    | (.time.busy // 0) as $busy | (.time.idle // 0) as $idle
-    | ($busy > $idle) as $running
-    | {id, title, dir: .location.directory, parent: null, running: $running,
-       outcome: ({succeeded: "done", failed: "failed"}[.outcome // ""] // "idle"),
-       unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")}
-    | select(.running or .unseen)') || return 1
+
+# A session from the server, as smx ai's normalizer takes it (./normalize.jq).
+# shellcheck disable=SC2016
+shape='def shape:
+  (.time.busy // 0) as $busy | (.time.idle // 0) as $idle
+  | ($busy > $idle) as $running
+  | {id, title, dir: .location.directory, parent: .parentID, updated: .time.updated, running: $running,
+     outcome: ({succeeded: "done", failed: "failed"}[.outcome // ""] // "idle"),
+     unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")};'
+
+# Sessions (JSON lines in and out), with what the running ones wait on.
+with_waiting() {
+  local session id
   while IFS= read -r session; do
     [ -n "$session" ] || continue
     if [ "$(jq -r .running <<<"$session")" = true ]; then
       id=$(jq -r .id <<<"$session")
-      jq -c --argjson p "$(get "/api/session/$id/permission" || echo '{"data":[]}')" \
-        --argjson f "$(get "/api/session/$id/form" || echo '{"data":[]}')" \
+      jq -c --argjson p "$(server_get "/api/session/$id/permission" || echo '{"data":[]}')" \
+        --argjson f "$(server_get "/api/session/$id/form" || echo '{"data":[]}')" \
         '. + {permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
               forms: [$f.data[] | {id, title}]}' <<<"$session"
     else
       echo "$session"
     fi
-  done <<<"$sessions" | jq -cs '{type: "smx.snapshot", sessions: .}'
+  done
+}
+
+# The server's state now, as an smx.snapshot: its recent sessions, and any
+# older ones running or finished since anyone looked at them. (Not
+# subagents', whose sessions report to theirs.)
+snapshot() {
+  local sessions
+  sessions=$(server_get "/api/session?limit=50" | jq -c "$shape"' [.data[] | select(.parentID == null) | shape]
+    | sort_by(-(.updated // 0)) | to_entries[]
+    | select(.key < 15 or .value.running or .value.unseen) | .value') || return 1
+  with_waiting <<<"$sessions" | jq -cs '{type: "smx.snapshot", sessions: .}'
+}
+
+# One session, as an smx.session (for one the snapshot didn't have).
+session_event() {
+  server_get "/api/session/$1" | jq -c "$shape"' .data | shape' | with_waiting \
+    | jq -c '{type: "smx.session", session: .}'
+}
+
+# The server's events that watch uses.
+watched=(
+  session.created session.renamed session.deleted session.archived session.viewed
+  session.execution.started session.execution.succeeded session.execution.failed
+  session.execution.interrupted permission.asked permission.replied
+  form.created form.replied form.cancelled
+)
+
+# The server's events, from a snapshot on, until it goes away. (Connected
+# first, so nothing between the snapshot and the stream is missed; and each
+# session's first event, if the snapshot didn't have it, after the session.)
+connected_events() {
+  server_events "${watched[@]}" | {
+    read -r _ || return 1
+    snap=$(snapshot) || return 1
+    echo "$snap"
+    known=" $(jq -r '.sessions[].id' <<<"$snap" | tr '\n' ' ') "
+    while IFS= read -r line; do
+      IFS=$'\t' read -r type id < <(jq -r '[.type, (.data.sessionID // .data.form.sessionID // "-")] | @tsv' <<<"$line")
+      if [ "$id" != - ] && [[ $known != *" $id "* ]]; then
+        known+="$id "
+        case "$type" in
+          session.created | session.deleted | session.archived) ;;
+          *) session_event "$id" || true ;;
+        esac
+      fi
+      printf '%s\n' "$line"
+    done
+  }
 }
 
 server_state() {
   if ctl is-active --quiet "$unit" || ctl is-failed --quiet "$unit"; then echo down; else echo stopped; fi
-}
-
-# The server's events, from a snapshot on, until it goes away. (Connected
-# first, so nothing between the snapshot and the stream is missed.)
-connected_events() {
-  server_events | {
-    read -r _ || return 1
-    snapshot || return 1
-    cat
-  }
 }
 
 # watch: what agents are doing (see ./normalize.jq), for good: a snapshot, then
@@ -168,10 +207,10 @@ status() {
     else
       say "OpenCode's server isn't reachable; see \`smx ai doctor\`"
     fi
-  elif [ "$(jq '[.sessions[] | select(.parent == null)] | length' <<<"$now")" = 0 ]; then
+  elif [ "$(jq '[.sessions[] | select(.parent == null and (.unseen or (.state | test("^(working|needs-)"))))] | length' <<<"$now")" = 0 ]; then
     echo "${D}No agents at work.${N}"
   else
-    jq -r --arg home "$HOME" '.sessions[] | select(.parent == null)
+    jq -r --arg home "$HOME" '.sessions[] | select(.parent == null and (.unseen or (.state | test("^(working|needs-)"))))
       | [.state, (if .unseen then "new" else "-" end), .id, (.title // "(untitled)"),
          ((.dir // "") | if startswith($home) then "~" + .[($home | length):] else . end)] | @tsv' <<<"$now" \
       | while IFS=$'\t' read -r state unseen id title dir; do

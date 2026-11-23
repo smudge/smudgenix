@@ -1,12 +1,14 @@
-{"v":1,"type":"snapshot","server":"up","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"state":"working","unseen":false,"permissions":[],"forms":[]}]}
-{"v":1,"type":"session","id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"state":"done","unseen":true,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"state":"done","unseen":false,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"state":"idle","unseen":false,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"state":"working","unseen":false,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"state":"needs-permission","unseen":false,"permissions":[{"id":"per_1","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}],"forms":[]}
-{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"state":"working","unseen":false,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"state":"failed","unseen":true,"permissions":[],"forms":[]}
-{"v":1,"type":"session","id":"ses_c","title":null,"dir":"/home/example/src/third","parent":null,"state":"needs-permission","unseen":false,"permissions":[{"id":"per_2","action":"edit","resources":["src/main.rs"],"save":[]}],"forms":[]}
+{"v":1,"type":"snapshot","server":"up","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"updated":null,"state":"working","unseen":false,"permissions":[],"forms":[]}]}
+{"v":1,"type":"session","id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"updated":1795400003000,"state":"done","unseen":true,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"updated":1795400004000,"state":"done","unseen":false,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"updated":1795400005000,"state":"idle","unseen":false,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"updated":1795400006000,"state":"working","unseen":false,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"updated":1795400007000,"state":"needs-permission","unseen":false,"permissions":[{"id":"per_1","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}],"forms":[]}
+{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"updated":1795400008000,"state":"working","unseen":false,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_b","title":"Update the domains","dir":"/home/example/src/other","parent":null,"updated":1795400009000,"state":"failed","unseen":true,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_c","title":null,"dir":"/home/example/src/third","parent":null,"updated":1795400010000,"state":"needs-permission","unseen":false,"permissions":[{"id":"per_2","action":"edit","resources":["src/main.rs"],"save":[]}],"forms":[]}
 {"v":1,"type":"server","state":"down"}
 {"v":1,"type":"server","state":"up"}
-{"v":1,"type":"snapshot","server":"up","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"state":"working","unseen":false,"permissions":[],"forms":[]}]}
+{"v":1,"type":"snapshot","server":"up","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","parent":null,"updated":null,"state":"working","unseen":false,"permissions":[],"forms":[]}]}
+{"v":1,"type":"session","id":"ses_d","title":"Older work, back at it","dir":"/home/example/src/old","parent":null,"updated":1795300000000,"state":"done","unseen":false,"permissions":[],"forms":[]}
+{"v":1,"type":"session","id":"ses_d","title":"Older work, back at it","dir":"/home/example/src/old","parent":null,"updated":1795400020000,"state":"working","unseen":false,"permissions":[],"forms":[]}

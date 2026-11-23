@@ -1,5 +1,6 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
-# own `smx.snapshot` and `smx.server`), smx ai's (v1) out:
+# own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
+# first event) and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
@@ -9,17 +10,20 @@
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
 #
-# where <session> is {id, title, dir, parent, state, unseen, permissions,
-# forms}, its state is needs-permission, needs-input, working, done, failed or
-# idle, and unseen is whether it's finished since anyone last looked at it.
+# where <session> is {id, title, dir, parent, updated, state, unseen,
+# permissions, forms}, its state is needs-permission, needs-input, working,
+# done, failed or idle, unseen is whether it's finished since anyone last
+# looked at it, and updated is when (in ms) it last changed, or null.
+#
+# A snapshot has the recent sessions (a few, and any running or unseen).
 #
 #   jq -cn --unbuffered -f normalize.jq
 
 def blank($id; $dir):
-  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, permissions: [], forms: []};
+  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, permissions: [], forms: []};
 
 def public:
-  {id, title, dir, parent,
+  {id, title, dir, parent, updated,
    state: (if (.permissions | length) > 0 then "needs-permission"
            elif (.forms | length) > 0 then "needs-input"
            elif .running then "working"
@@ -58,6 +62,9 @@ foreach inputs as $e ({sessions: {}, emit: []};
   | if $e.type == "smx.snapshot" then
       .sessions = ($e.sessions | map({key: .id, value: (blank(.id; .dir) + .)}) | from_entries)
       | .emit = [{v: 1, type: "snapshot", server: "up", sessions: [.sessions[] | public]}]
+    elif $e.type == "smx.session" then
+      .sessions[$e.session.id] = (blank($e.session.id; $e.session.dir) + $e.session)
+      | .emit = [{v: 1, type: "session"} + (.sessions[$e.session.id] | public)]
     elif $e.type == "smx.server" then
       .emit = [{v: 1, type: "server", state: $e.state}]
       | if $e.state != "up" then .sessions = {} else . end
@@ -68,7 +75,9 @@ foreach inputs as $e ({sessions: {}, emit: []};
     else
       session_id($e) as $id
       | (.sessions[$id] // blank($id; $e.location.directory)) as $before
-      | ($before | apply($e)) as $after
+      | ($before | apply($e)) as $changed
+      | (if ($before | public | del(.updated)) != ($changed | public | del(.updated))
+         then $changed | .updated = ($e.created // .updated) else $changed end) as $after
       | .sessions[$id] = $after
       | if ($before | public) != ($after | public)
         then .emit = [{v: 1, type: "session"} + ($after | public)] else . end
