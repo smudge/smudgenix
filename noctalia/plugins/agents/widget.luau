@@ -14,8 +14,9 @@ local function render(agents)
   agents = agents or noctalia.state.get("agents") or { server = "stopped", sessions = {} }
   local sessions = agents.sessions or {}
   local needYou = count(sessions, function(s) return s.state == "needs-permission" or s.state == "needs-input" end)
-  local working = count(sessions, function(s) return s.state == "working" end)
-  local unseen = count(sessions, function(s) return s.unseen end)
+  -- (A subagent's work is its parent's; what one needs from you is yours.)
+  local working = count(sessions, function(s) return s.parent == nil and s.state == "working" end)
+  local unseen = count(sessions, function(s) return s.parent == nil and s.unseen end)
 
   if agents.server == "down" then
     barWidget.setGlyph("robot-off")

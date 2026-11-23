@@ -1,7 +1,8 @@
 --!nonstrict
 -- Follows `smx ai watch`, publishing what agents are doing ("agents": the
--- server's state, and its sessions) for the widget and panel, and saying so
--- when one needs you or finishes.
+-- server's state, and its sessions, subagents' included) for the widget and
+-- panel, and saying so when one needs you or finishes, unless you're looking
+-- at it (its TUI's window is focused).
 
 local sessions = {} -- by id
 local server = "stopped"
@@ -15,25 +16,61 @@ local function publish()
   noctalia.state.set("agents", { server = server, sessions = list })
 end
 
+-- The focused window's process, from niri's events (nil if none, or not niri).
+local windows = {} -- pid by window id
+local focused = nil -- window id
+
+noctalia.compositor.subscribe(nil, function(event, data)
+  if event == "reset" then
+    windows, focused = {}, nil
+  elseif event == "WindowsChanged" then
+    windows = {}
+    for _, window in data.windows or {} do
+      windows[window.id] = window.pid
+      if window.is_focused then focused = window.id end
+    end
+  elseif event == "WindowOpenedOrChanged" and data.window then
+    windows[data.window.id] = data.window.pid
+    if data.window.is_focused then focused = data.window.id end
+  elseif event == "WindowClosed" then
+    windows[data.id] = nil
+    if focused == data.id then focused = nil end
+  elseif event == "WindowFocusChanged" then
+    focused = data.id
+  end
+end)
+
+local function lookingAt(session)
+  local pid = focused and windows[focused]
+  if not pid then return false end
+  for _, p in session.terminals or {} do
+    if p == pid then return true end
+  end
+  return false
+end
+
 local function title(session)
   return session.title or "An agent"
 end
 
--- What changed for you, if anything, from before to after.
+local function notify(say, summary, body, id)
+  say(summary, body, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = id })
+end
+
+-- What changed for you, if anything, from before to after. (A subagent's
+-- finishing is its parent's news, not yours.)
 local function tell(before, after)
   local was = before and before.state
-  if after.state == was then return end
-  local body
+  if after.state == was or lookingAt(after) then return end
   if after.state == "needs-permission" then
     local p = after.permissions[#after.permissions]
-    body = p and (p.action .. " " .. table.concat(p.resources or {}, ", ")) or nil
-    noctalia.notify("Needs permission: " .. title(after), body, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = after.id })
+    notify(noctalia.notify, "Needs permission: " .. title(after), p and (p.action .. " " .. table.concat(p.resources or {}, ", ")) or nil, after.id)
   elseif after.state == "needs-input" then
     local f = after.forms[#after.forms]
-    noctalia.notify("Asks: " .. title(after), f and f.title or nil, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = after.id })
-  elseif after.unseen and (after.state == "done" or after.state == "failed") then
-    local notify = after.state == "done" and noctalia.notify or noctalia.notifyError
-    notify((after.state == "done" and "Done: " or "Failed: ") .. title(after), nil, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = after.id })
+    notify(noctalia.notify, "Asks: " .. title(after), f and f.title or nil, after.id)
+  elseif after.parent == nil and after.unseen and (after.state == "done" or after.state == "failed") then
+    local done = after.state == "done"
+    notify(done and noctalia.notify or noctalia.notifyError, (done and "Done: " or "Failed: ") .. title(after), after.last, after.id)
   end
 end
 
@@ -52,10 +89,8 @@ local function onLine(line)
       sessions[session.id] = session
     end
   elseif event.type == "session" then
-    if event.parent == nil then
-      tell(sessions[event.id], event)
-      sessions[event.id] = event
-    end
+    tell(sessions[event.id], event)
+    sessions[event.id] = event
   elseif event.type == "removed" then
     sessions[event.id] = nil
   elseif event.type == "server" then
@@ -66,4 +101,5 @@ local function onLine(line)
 end
 
 publish()
-noctalia.runStream("smx ai watch", onLine)
+-- (Again if it ever stops: each start begins with a snapshot.)
+noctalia.runStream("trap 'kill $w 2>/dev/null; exit' TERM INT HUP; while :; do smx ai watch & w=$!; wait $w; sleep 2; done", onLine)
