@@ -1,6 +1,6 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.2.0"
+version     = "0.3.0"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
@@ -20,3 +20,10 @@ entry      = "panel.luau"
 width      = 420
 height     = "content"
 max_height = 520
+
+[[launcher_provider]]
+id                       = "search"
+entry                    = "launcher.luau"
+prefix                   = "ai"
+glyph                    = "robot"
+include_in_global_search = true
