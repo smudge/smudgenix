@@ -57,11 +57,50 @@ local function notify(say, summary, body, id)
   say(summary, body, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = id })
 end
 
--- What changed for you, if anything, from before to after. (A subagent's
--- finishing is its parent's news, not yours.)
+-- Finished sessions, told together a moment after the first (so several
+-- finishing at once make one notification, not a pile).
+local finished = {} -- ids
+local finishedAt = nil
+local together = 2000 -- ms
+
+local function tellFinished()
+  local still = {}
+  for _, id in finished do
+    local session = sessions[id]
+    -- (Not if you've looked at it, or are, since.)
+    if session and session.unseen and not lookingAt(session) then table.insert(still, session) end
+  end
+  finished, finishedAt = {}, nil
+  if #still == 0 then return end
+  local failed = 0
+  for _, session in still do
+    if session.state == "failed" then failed += 1 end
+  end
+  local say = failed > 0 and noctalia.notifyError or noctalia.notify
+  if #still == 1 then
+    local session = still[1]
+    notify(say, (session.state == "done" and "Done: " or "Failed: ") .. title(session), session.last, session.id)
+  else
+    local titles = {}
+    for _, session in still do
+      table.insert(titles, (session.state == "failed" and "✗ " or "✓ ") .. title(session))
+    end
+    say(`{#still} agents finished` .. (failed > 0 and ` ({failed} failed)` or ""), table.concat(titles, "\n"),
+      { actions = { { id = "show", label = "Show" } }, onAction = "onNotificationAction" })
+  end
+end
+
+function update()
+  if finishedAt and noctalia.nowMs() - finishedAt >= together then tellFinished() end
+end
+noctalia.setUpdateInterval(500)
+
+-- What changed for you, if anything, from before to after: unless you're
+-- looking at it, or said not to (the plugin's notify setting). (A
+-- subagent's finishing is its parent's news, not yours.)
 local function tell(before, after)
   local was = before and before.state
-  if after.state == was or lookingAt(after) then return end
+  if after.state == was or lookingAt(after) or noctalia.getConfig("notify") == false then return end
   if after.state == "needs-permission" then
     local p = after.permissions[#after.permissions]
     notify(noctalia.notify, "Needs permission: " .. title(after), p and (p.action .. " " .. table.concat(p.resources or {}, ", ")) or nil, after.id)
@@ -69,13 +108,17 @@ local function tell(before, after)
     local f = after.forms[#after.forms]
     notify(noctalia.notify, "Asks: " .. title(after), f and f.title or nil, after.id)
   elseif after.parent == nil and after.unseen and (after.state == "done" or after.state == "failed") then
-    local done = after.state == "done"
-    notify(done and noctalia.notify or noctalia.notifyError, (done and "Done: " or "Failed: ") .. title(after), after.last, after.id)
+    table.insert(finished, after.id)
+    finishedAt = finishedAt or noctalia.nowMs()
   end
 end
 
-function onNotificationAction(_action, id)
-  if id then noctalia.runAsync({ "smx", "ai", "open", id }) end
+function onNotificationAction(action, id)
+  if action == "show" then
+    noctalia.togglePanel("smudgenix/agents:sessions")
+  elseif id then
+    noctalia.runAsync({ "smx", "ai", "open", id })
+  end
 end
 
 local function onLine(line)

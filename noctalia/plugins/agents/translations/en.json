@@ -1,0 +1,8 @@
+{
+  "settings": {
+    "notify": {
+      "label": "Notifications",
+      "description": "Tell me when an agent needs me or finishes (unless I'm looking at it)"
+    }
+  }
+}

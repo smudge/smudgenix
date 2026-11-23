@@ -1,10 +1,17 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.5.0"
+version     = "0.6.0"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
 description = "Agents, as part of the desktop (via smx ai)."
+
+[[setting]]
+key             = "notify"
+type            = "bool"
+label_key       = "settings.notify.label"
+description_key = "settings.notify.description"
+default         = true
 
 [[service]]
 id    = "watch"
