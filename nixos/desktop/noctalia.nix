@@ -13,6 +13,9 @@ let
 
   theme = import ../../theme pkgs;
 
+  # (Agents on the bar, with the AI module: see ../ai.nix.)
+  agents = config.smudgenix.ai.enable;
+
   # smudgenix's own plugins (../../noctalia/plugins), checked the way Noctalia
   # loads them. (A home can use a checkout's instead, as you edit them: see
   # ../../nix/modules/noctalia.nix.)
@@ -109,7 +112,7 @@ let
         { name = "community"; kind = "git"; location = "https://github.com/noctalia-dev/community-plugins"; enabled = true; }
         { name = "smudgenix"; kind = "path"; location = "${plugins}"; enabled = true; }
       ];
-      enabled = [ "smudgenix/agents" ];
+      enabled = lib.optional agents "smudgenix/agents";
     };
 
     # A dock, out of the way until it's needed.
@@ -141,9 +144,9 @@ let
       layer = "auto";
       smart_auto_hide = true;
       reserve_space = false;
-      start = [ "launcher" "workspaces" "clipboard" "media" ];
+      start = [ "launcher" "workspaces" ] ++ lib.optional agents "agents" ++ [ "clipboard" "media" ];
       center = [ "clock" "control-center" ];
-      end = [ "tray" "agents" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
+      end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
     };
 
     # Icons only, and a short date & time.
@@ -153,6 +156,7 @@ let
       brightness.show_label = false;
       network.show_label = false;
       volume.show_label = false;
+    } // lib.optionalAttrs agents {
       agents.type = "smudgenix/agents:agents";
     };
   };

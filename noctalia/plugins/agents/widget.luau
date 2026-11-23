@@ -41,7 +41,7 @@ local function render(agents)
     barWidget.setGlyph("robot")
     barWidget.setGlyphColor("on_surface/0.6")
     barWidget.setText("")
-    barWidget.setTooltip("Agents: none at work")
+    barWidget.setTooltip(agents.server == "up" and "Agents: none at work" or "Agents: none (OpenCode's server isn't running)")
   end
 end
 
