@@ -24,9 +24,10 @@ let
   # `smx ai`.
   smx-ai = pkgs.writeShellApplication {
     name = "smx-ai";
-    runtimeInputs = [ pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.jq ];
+    runtimeInputs = [ pkgs.coreutils pkgs.curl pkgs.gnugrep pkgs.gnused pkgs.jq ];
     text = with theme.colors; ''
       opencode=${lib.getExe opencode}
+      normalize=${../ai/normalize.jq}
       color_dim="${base03}" color_red="${base08}" color_green="${base0B}"
     '' + builtins.readFile ../ai/smx-ai.sh;
   };

@@ -27,10 +27,106 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
+  watch                   What agents are doing: a snapshot, then each
+                          change, as JSON lines
+  watch --raw             The server's own events, as JSON lines
+  watch --replay <file>   Recorded server events, as \`watch\` would show them
   doctor                  Check that agents run as they should: on the
                           $unit server, without the desktop
   help                    Show this help
 EOF
+}
+
+# --- The server ---------------------------------------------------------------
+
+# Its URL and password, from where opencode finds them.
+server_url() { jq -r '.url // empty' "$state_file" 2>/dev/null; }
+
+# curl, as the server's client (its password kept off the command line).
+server_curl() {
+  local password
+  password=$(jq -r '.password // empty' "$state_file" 2>/dev/null) || return 3
+  curl -K <(printf 'user = "opencode:%s"\n' "$password") "$@"
+}
+
+# Its event stream, as JSON lines, from now until it ends. (A down server
+# ends it at once.)
+server_events() {
+  local url
+  url=$(server_url)
+  [ -n "$url" ] || return 3
+  server_curl -sfN -H 'Accept: text/event-stream' "$url/api/event" | sed -un 's/^data: //p'
+}
+
+# --- watch --------------------------------------------------------------------
+
+# watch --raw: the server's events, as it sends them, for good (reconnecting
+# when it restarts). For recording fixtures.
+watch_raw() {
+  while true; do
+    server_events || true
+    sleep 1
+  done
+}
+
+# The server's state now, as an smx.snapshot (see ./normalize.jq): its
+# running sessions, and what they're waiting on.
+snapshot() {
+  local url ids id
+  url=$(server_url)
+  get() { server_curl -sf "$url$1"; }
+  ids=$(get /api/session/active | jq -r '.data | keys[]') || return 1
+  for id in $ids; do
+    jq -n --argjson s "$(get "/api/session/$id")" \
+      --argjson p "$(get "/api/session/$id/permission" || echo '{"data":[]}')" \
+      --argjson f "$(get "/api/session/$id/form" || echo '{"data":[]}')" \
+      '$s.data | {id, title, dir: .location.directory, parent: .parentID, running: true,
+        permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
+        forms: [$f.data[] | {id, title}]}'
+  done | jq -cs '{type: "smx.snapshot", sessions: .}'
+}
+
+server_state() {
+  if ctl is-active --quiet "$unit" || ctl is-failed --quiet "$unit"; then echo down; else echo stopped; fi
+}
+
+# The server's events, from a snapshot on, until it goes away. (Connected
+# first, so nothing between the snapshot and the stream is missed.)
+connected_events() {
+  server_events | {
+    read -r _ || return 1
+    snapshot || return 1
+    cat
+  }
+}
+
+# watch: what agents are doing (see ./normalize.jq), for good: a snapshot, then
+# each change; and while the server's away, that it is (then, once it's back,
+# a snapshot). It retries every few seconds, which costs nothing.
+watch_normalized() {
+  local delay=1 last="" state
+  while true; do
+    if connected_events; then delay=1; last=up; fi
+    state=$(server_state)
+    if [ "$state" != "$last" ]; then
+      jq -cn --arg s "$state" '{type: "smx.server", state: $s}'
+      last=$state
+    fi
+    sleep "$delay"
+    delay=$((delay < 5 ? delay * 2 : 5))
+  done | jq -cn --unbuffered -f "$normalize"
+}
+
+watch_command() {
+  case "${1:-}" in
+    "") watch_normalized ;;
+    --raw) watch_raw ;;
+    --replay)
+      [ -f "${2:-}" ] || die "usage: smx ai watch --replay <events.jsonl>"
+      jq -cn -f "$normalize" < "$2"
+      ;;
+    *) die "usage: smx ai watch [--raw | --replay <events.jsonl>]" ;;
+  esac
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -127,6 +223,7 @@ doctor() {
 
 case "${1:-}" in
   doctor) doctor ;;
+  watch) shift; watch_command "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac

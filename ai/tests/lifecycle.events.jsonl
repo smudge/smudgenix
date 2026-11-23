@@ -1,0 +1,18 @@
+{"type":"session.created","location":{"directory":"/home/example/src/project"},"data":{"sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj","location":{"directory":"/home/example/src/project"},"title":"lifecycle fixture"}}
+{"type":"form.created","location":{"directory":"/home/example/src/project"},"data":{"form":{"id":"frm_205d50f10001OxE61ymy0G84Ok","sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj","title":"Which approach?"}}}
+{"type":"form.replied","location":{"directory":"/home/example/src/project"},"data":{"id":"frm_205d50f10001OxE61ymy0G84Ok","sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj","answer":{"choice":"the second"}}}
+{"type":"form.created","location":{"directory":"/home/example/src/project"},"data":{"form":{"id":"frm_205d51900001tO03yrgieYz7ex","sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj","title":"Another?"}}}
+{"type":"form.cancelled","location":{"directory":"/home/example/src/project"},"data":{"id":"frm_205d51900001tO03yrgieYz7ex","sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj"}}
+{"type":"session.renamed","data":{"sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj","title":"lifecycle fixture, renamed"}}
+{"type":"session.deleted","data":{"sessionID":"ses_dfa2b04e6ffepDYqMp7R7VaFEj"}}
+{"type":"session.created","location":{"directory":"/home/example/src/project"},"data":{"sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","location":{"directory":"/home/example/src/project"},"title":"lifecycle fixture"}}
+{"type":"permission.asked","location":{"directory":"/home/example/src/project"},"data":{"id":"per_205d57834001R4UNd5p4cFDrwn","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}}
+{"type":"permission.replied","location":{"directory":"/home/example/src/project"},"data":{"sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","requestID":"per_205d57834001R4UNd5p4cFDrwn","reply":"once"}}
+{"type":"permission.asked","location":{"directory":"/home/example/src/project"},"data":{"id":"per_205d582390019YnG8ZJXcfcRJA","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","action":"edit","resources":["src/generated.rs"]}}
+{"type":"permission.replied","location":{"directory":"/home/example/src/project"},"data":{"sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","requestID":"per_205d582390019YnG8ZJXcfcRJA","reply":"reject"}}
+{"type":"form.created","location":{"directory":"/home/example/src/project"},"data":{"form":{"id":"frm_205d58c270012izyN5dgIg7hh7","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","title":"Which approach?"}}}
+{"type":"form.replied","location":{"directory":"/home/example/src/project"},"data":{"id":"frm_205d58c270012izyN5dgIg7hh7","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","answer":{"choice":"the second"}}}
+{"type":"form.created","location":{"directory":"/home/example/src/project"},"data":{"form":{"id":"frm_205d5962b001ZmiO50duzrpXab","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","title":"Another?"}}}
+{"type":"form.cancelled","location":{"directory":"/home/example/src/project"},"data":{"id":"frm_205d5962b001ZmiO50duzrpXab","sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a"}}
+{"type":"session.renamed","data":{"sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a","title":"lifecycle fixture, renamed"}}
+{"type":"session.deleted","data":{"sessionID":"ses_dfa2a87e2ffesBMMGiS5rIdV0a"}}

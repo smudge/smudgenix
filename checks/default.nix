@@ -1,5 +1,6 @@
 # Builds an example host and home from the templates' shape, so a broken push
-# fails `nix flake check` instead of a machine's next daily update.
+# fails `nix flake check` instead of a machine's next daily update. And tests
+# smx ai's normalizer.
 { self, nixpkgs }:
 
 let
@@ -31,10 +32,20 @@ let
       smudgenix.git = { name = "Example"; email = "example@example.com"; };
     }];
   };
+  # smx ai's normalizer, on recorded (and made-up) server events.
+  ai = pkgs.runCommand "smx-ai-normalize" { nativeBuildInputs = [ pkgs.jq pkgs.diffutils ]; } ''
+    for events in ${../ai/tests}/*.events.jsonl; do
+      expected=''${events%.events.jsonl}.expected.jsonl
+      echo "$(basename "$events")"
+      jq -cn -f ${../ai/normalize.jq} < "$events" | diff -u "$expected" -
+    done
+    touch $out
+  '';
 in
 {
   ${system} = {
     host = host.config.system.build.toplevel;
     home = home.activationPackage;
+    inherit ai;
   };
 }
