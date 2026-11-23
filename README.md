@@ -78,6 +78,13 @@ On the desktop, the bar shows what agents are doing (and tells you when one
 needs you or finishes), and Mod+A shows them, with recent sessions to return
 to. `smx ai status`, `watch` and `open` do the same from a terminal.
 
+When an agent asks permission, its notification only offers Deny (so one
+appearing as you type can't allow anything); allow it from Mod+A, which shows
+the request as it is (the command, or the files, and where), or with
+`smx ai allow <request>`. `--always` allows the like in that project from
+now on (OpenCode keeps these); `smx ai allowed` lists them, and
+`smx ai allowed revoke <id>` takes one back.
+
 ## smx
 
 `smx`, installed for every user, works on your home, and never needs sudo.
