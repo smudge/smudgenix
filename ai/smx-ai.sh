@@ -247,6 +247,17 @@ tui_changes() {
   done
 }
 
+# watch's tasks, while it runs: whenever they change (or a review goes
+# stale), and at first; without their files, for brevity.
+task_changes() {
+  local now last="" watcher=$$
+  while [ -e "/proc/$watcher" ]; do
+    now=$(task_command --json 2>/dev/null | jq -c '{type: "smx.tasks", tasks: [.tasks[] | .review |= (if . then del(.files) + {files: (.files | length)} else . end)]}') || now=""
+    [ -z "$now" ] || [ "$now" = "$last" ] || { echo "$now"; last=$now; }
+    sleep 5
+  done
+}
+
 # watch: what agents are doing (see ./normalize.jq), for good: a snapshot, then
 # each change; and while the server's away, that it is (then, once it's back,
 # a snapshot). It retries every few seconds, which costs nothing.
@@ -254,6 +265,7 @@ watch_normalized() {
   local delay=1 last="" state
   {
     tui_changes &
+    task_changes &
     while true; do
       if connected_events; then delay=1; last=up; fi
       state=$(server_state)
