@@ -346,25 +346,49 @@ window_of_tmux_session() {
   return 1
 }
 
+# tmux panes showing a session's TUI by title (one started without -s): "OC |
+# <its title>", maybe cut short with "…".
+panes_titled() {
+  local pane title
+  [ -n "$1" ] || return 0
+  tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}	#{pane_title}' 2>/dev/null \
+    | while IFS=$'\t' read -r pane title; do
+        case "$title" in "OC | "*) title=${title#OC | } ;; *) continue ;; esac
+        if [ "${title%…}" != "$title" ]; then
+          [[ $1 == "${title%…}"* ]] && echo "$pane"
+        elif [ "$1" = "$title" ]; then
+          echo "$pane"
+        fi
+      done
+}
+
+# Shows a tmux pane, in its client's window, if it has one.
+focus_pane() {
+  local window
+  window=$(window_of_tmux_session "${1%%:*}") || return 1
+  tmux select-window -t "${1%.*}" && tmux select-pane -t "$1"
+  niri msg action focus-window --id "$window"
+}
+
 open_session() {
-  local id=${1:-} session dir pid pane window
+  local id=${1:-} session dir pid pane panes
   [ -n "$id" ] || die "usage: smx ai open <session>"
   [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
   session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
   [ -n "$session" ] || die "no session $id" 4
   dir=$(jq -r '.location.directory // empty' <<<"$session")
 
-  for pid in $(tuis_on "$id"); do
-    if pane=$(pane_of "$pid"); then
-      if window=$(window_of_tmux_session "${pane%%:*}"); then
-        tmux select-window -t "${pane%.*}" && tmux select-pane -t "$pane"
-        niri msg action focus-window --id "$window"
-        return
-      fi
-    fi
+  panes=$(for pid in $(tuis_on "$id"); do pane_of "$pid" || true; done; panes_titled "$(jq -r '.title // empty' <<<"$session")")
+  for pane in $panes; do
+    focus_pane "$pane" && return
   done
 
-  # (Not on screen: in a new terminal.)
+  # (Not on screen: in a new terminal, its TUI if it has one.)
+  for pane in $panes; do
+    { tmux select-window -t "${pane%.*}" && tmux select-pane -t "$pane"; } || continue
+    setsid -f xdg-terminal-exec tmux attach-session -t "${pane%%:*}" </dev/null &>/dev/null
+    return
+  done
   cd "${dir:-$HOME}" 2>/dev/null || cd "$HOME"
   setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
 }
