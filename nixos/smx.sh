@@ -215,6 +215,9 @@ $(config_usage)
 The OS (/etc/nixos), shared by every user:
   os ...                  The same commands, for the OS (see \`smx os help\`)
 
+Agents:
+  ai ...                  Agents, as part of the desktop (see \`smx ai help\`)
+
 Tools:
   shell <pkg>... [-- <cmd>]
                           A shell with these packages (from the OS's nixpkgs)
@@ -1116,6 +1119,11 @@ case "${1:-}" in
   history) home_history ;;
   revert) shift; home_revert "$@" ;;
   os) shift; os_command "$@" ;;
+  ai)
+    shift
+    command -v smx-ai >/dev/null || die "agents are off on this OS (smudgenix.ai.enable)"
+    exec smx-ai "$@"
+    ;;
   shell) shift; shell_with "$@" ;;
   run) shift; run_pkg "$@" ;;
   search) shift; search_pkgs "$@" ;;

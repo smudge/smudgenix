@@ -19,6 +19,18 @@ let
     }];
   });
 
+  theme = import ../theme pkgs;
+
+  # `smx ai`.
+  smx-ai = pkgs.writeShellApplication {
+    name = "smx-ai";
+    runtimeInputs = [ pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.jq ];
+    text = with theme.colors; ''
+      opencode=${lib.getExe opencode}
+      color_dim="${base03}" color_red="${base08}" color_green="${base0B}"
+    '' + builtins.readFile ../ai/smx-ai.sh;
+  };
+
   # (opencode won't share its port, and otherwise reports a clash only once
   # it's "started".)
   checkFree = pkgs.writeShellScript "opencode-check-free" ''
@@ -55,7 +67,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ opencode ];
+    environment.systemPackages = [ opencode smx-ai ];
 
     systemd.user.services.opencode = {
       description = "OpenCode server, for agents";
