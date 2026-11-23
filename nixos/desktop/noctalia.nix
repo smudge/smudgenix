@@ -115,6 +115,11 @@ let
       enabled = lib.optional agents "smudgenix/agents";
     };
 
+    # (Only when it isn't the plugin's default.)
+    plugin_settings = lib.optionalAttrs (agents && !config.smudgenix.ai.notify) {
+      "smudgenix/agents".notify = false;
+    };
+
     # A dock, out of the way until it's needed.
     dock = {
       enabled = true;

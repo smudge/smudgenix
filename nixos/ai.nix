@@ -57,6 +57,15 @@ in
 {
   options.smudgenix.ai = {
     enable = lib.mkEnableOption "AI agents (OpenCode), with a server per user" // { default = true; };
+    notify = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether the desktop tells you when an agent needs you or finishes
+        (unless you're looking at it). Each user can change it in Noctalia's
+        settings (Plugins → Agents).
+      '';
+    };
     server.unsetEnvironment = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ "NIRI_SOCKET" "WAYLAND_DISPLAY" "WAYLAND_SOCKET" "DISPLAY" ];
