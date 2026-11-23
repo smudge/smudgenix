@@ -28,6 +28,14 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
+  new [--dir <folder>] [--tui] "<what to do>"
+                          Start a thread of work, in the background (or a TUI)
+  reply <session> "<what to say>"
+                          Tell it more
+  park <session>          Not now (it stays open)
+  close <session> [--accept | --discard]
+                          End it (deciding its review, if it has one)
+  context --json          Where you are: the focused window's project
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
   open <session>          Show a session: its TUI's window, or a new one
@@ -138,7 +146,7 @@ filled() {
 # subagents' (of the recent ones).
 snapshot() {
   local sessions
-  sessions=$(server_get "/api/session?limit=50" | jq -c "$shape"' [.data[] | shape] as $all
+  sessions=$(server_get "/api/session?limit=50&archived=false" | jq -c "$shape"' [.data[] | shape] as $all
     | ([$all[] | select(.parent == null)] | sort_by(-(.updated // 0)) | to_entries
        | map(select(.key < 15 or .value.running or .value.unseen) | .value)) as $roots
     | [$roots, [$all[] | select(.parent != null)]]
@@ -587,7 +595,7 @@ review() {
   task="" accepted=""
   for file in "$tasks_dir"/*/task.json; do
     [ -f "$file" ] || continue
-    if jq -e --arg s "$session" '.session == $s and .state != "accepted"' "$file" >/dev/null; then
+    if jq -e --arg s "$session" '.session == $s and (.state | IN("accepted", "discarded") | not)' "$file" >/dev/null; then
       task=$(cat "$file")
     elif jq -e --arg s "$session" '.session == $s' "$file" >/dev/null; then
       accepted=$(jq -c --argjson a "${accepted:-null}" 'if $a == null or .updated > $a.updated then . else $a end' "$file")
@@ -746,6 +754,159 @@ decide() {
       echo "${D}Deferred: $(jq -r .title <<<"$task")${N}"
       ;;
   esac
+}
+
+# --- threads: new, reply, close, park, context --------------------------------
+
+# (A session's task that's still open: not accepted, discarded or closed.)
+open_task_of() {
+  local file
+  for file in "$tasks_dir"/*/task.json; do
+    [ -f "$file" ] || continue
+    jq -ce --arg s "$1" 'select(.session == $s and (.state | IN("accepted", "discarded") | not))' "$file" && return
+  done
+  return 1
+}
+
+need_server() {
+  if [ -z "$(server_url)" ] || ! server_get "/api/session?limit=1" >/dev/null; then die "OpenCode's server isn't reachable" 3; fi
+}
+
+prompt_session() {
+  server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg t "$2" '{text: $t}')" "$(server_url)/api/session/$1/prompt" >/dev/null
+}
+
+# new: starts a thread of work in a folder (by default this one), in the
+# background (it comes back when it's done, or needs you), or --tui in a
+# terminal too.
+new_thread() {
+  local dir=$PWD tui="" json="" prompt="" session
+  local usage="usage: smx ai new [--dir <folder>] [--tui] [--json] \"<what to do>\""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dir) dir=${2:-}; shift ;;
+      --tui) tui=1 ;;
+      --json) json=1 ;;
+      -*) die "$usage" ;;
+      *) [ -z "$prompt" ] || die "$usage"; prompt=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$prompt" ] || die "$usage"
+  [ -d "$dir" ] || die "no folder $dir" 4
+  dir=$(cd "$dir" && pwd)
+  need_server
+  session=$(server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg d "$dir" '{location: {directory: $d}}')" "$(server_url)/api/session" \
+    | jq -r '.data.id // .id // empty') || true
+  [ -n "$session" ] || die "couldn't start a session in $dir"
+  prompt_session "$session" "$prompt" || die "couldn't give session $session its prompt"
+  if [ -n "$json" ]; then
+    jq -cn --arg s "$session" --arg d "$dir" '{v: 1, session: $s, dir: $d}'
+  else
+    echo "${G}✓${N} Started, in the background: $session ${D}($dir)${N}"
+  fi
+  [ -z "$tui" ] || open_session "$session"
+}
+
+# reply: tells a thread more (it goes back to work).
+reply() {
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ "$#" -eq 2 ] || die "usage: smx ai reply <session> \"<what to say>\""
+  need_server
+  server_get "/api/session/$1" >/dev/null || die "no session $1" 4
+  prompt_session "$1" "$2" || die "couldn't send it to session $1"
+  echo "${G}✓${N} Sent: it's back at work."
+}
+
+# park: not now: it's seen (so not news), and its review deferred.
+park() {
+  local session=${1:-} sess task
+  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai park <session>"
+  need_server
+  sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
+  [ -n "$sess" ] || die "no session $session" 4
+  if [ "$(jq '(.time.busy // 0) > (.time.idle // 0)' <<<"$sess")" = true ]; then
+    echo "${D}Nothing to do: it's at work, and comes back when it's done.${N}"
+    return
+  fi
+  server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --argjson i "$(jq '.time.idle // 0' <<<"$sess")" '{idle: $i}')" \
+    "$(server_url)/api/session/$session/view" >/dev/null || die "couldn't park session $session"
+  if task=$(open_task_of "$session"); then
+    save_task "$(jq -c --argjson now "$(now_ms)" '.state = "deferred" | .updated = $now' <<<"$task")"
+  fi
+  echo "${D}Parked: $(jq -r '.title // .id' <<<"$sess")${N}"
+}
+
+# close: ends a thread (OpenCode archives its session). Work waiting for
+# review needs a decision first: --accept it, or --discard the review (the
+# changes stay as they are either way; nothing's undone).
+close_thread() {
+  local session="" decision="" sess task
+  local usage="usage: smx ai close <session> [--accept | --discard]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --accept | --discard) decision=${1#--} ;;
+      -*) die "$usage" ;;
+      *) session=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] || die "$usage"
+  need_server
+  sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
+  [ -n "$sess" ] || die "no session $session" 4
+  if task=$(open_task_of "$session"); then
+    case "$decision" in
+      accept) decide accept "$(jq -r .id <<<"$task")" >/dev/null ;;
+      discard) save_task "$(jq -c --argjson now "$(now_ms)" '.state = "discarded" | .updated = $now' <<<"$task")" ;;
+      *) die "$(jq -r .title <<<"$task") has work waiting for review: close it with --accept or --discard" ;;
+    esac
+  fi
+  if [ "$(jq -r '.time.archived // empty' <<<"$sess")" != "" ]; then
+    echo "${D}Nothing to do: it's closed already.${N}"
+    return
+  fi
+  server_curl -sf --max-time 10 -X PATCH -H 'Content-Type: application/json' -d '{"archived": true}' \
+    "$(server_url)/api/session/$session" >/dev/null || die "couldn't close session $session"
+  echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")${decision:+ (${decision}ed)}"
+}
+
+# A folder's project, as watch names them: its repository's (main checkout's)
+# folder, else its own; ~ for your home.
+project_of() {
+  local project
+  project=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && project=${project%/.git} || project=$1
+  if [ "$project" = "$HOME" ]; then echo "~"; else basename "$project"; fi
+}
+
+# context: where you are: the focused window's folder (a terminal's: its
+# tmux pane's, or its shell's), and so its project; nulls if it's not a
+# terminal, or unknown.
+context() {
+  local window pid client session dir="" child
+  [ "${1:-}" = --json ] || die "usage: smx ai context --json"
+  if [ -n "${NIRI_SOCKET:-}" ] && window=$(niri msg --json focused-window 2>/dev/null) \
+    && pid=$(jq -re '.pid // empty' <<<"$window"); then
+    # (A tmux client in it: its session's current pane. Else its shell's.)
+    for client in $(tmux list-clients -F '#{client_pid}' 2>/dev/null); do
+      if ancestors "$client" | grep -qx "$pid"; then
+        session=$(tmux list-clients -F '#{client_pid} #{session_name}' | awk -v c="$client" '$1 == c { print $2 }')
+        dir=$(tmux display-message -p -t "$session" '#{pane_current_path}' 2>/dev/null) || dir=""
+        break
+      fi
+    done
+    if [ -z "$dir" ] && child=$(pgrep -P "$pid" | head -1) && [ -n "$child" ]; then
+      dir=$(readlink "/proc/$child/cwd" 2>/dev/null) || dir=""
+    fi
+  fi
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    jq -cn --arg d "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")" --arg p "$(project_of "$dir")" \
+      '{v: 1, dir: $d, project: $p}'
+  else
+    echo '{"v":1,"dir":null,"project":null}'
+  fi
 }
 
 # --- allow, deny, allowed -----------------------------------------------------
@@ -1031,6 +1192,11 @@ case "${1:-}" in
   accept) shift; [ "$#" -le 1 ] || die "usage: smx ai accept <task>"; decide accept "${1:-}" ;;
   revise) shift; [ "$#" -le 2 ] || die "usage: smx ai revise <task> \"<what to change>\""; decide revise "${1:-}" "${2:-}" ;;
   defer) shift; [ "$#" -le 1 ] || die "usage: smx ai defer <task>"; decide defer "${1:-}" ;;
+  new) shift; new_thread "$@" ;;
+  reply) shift; reply "$@" ;;
+  park) shift; park "$@" ;;
+  close) shift; close_thread "$@" ;;
+  context) shift; context "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac
