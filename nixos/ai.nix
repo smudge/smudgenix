@@ -27,7 +27,7 @@ let
   # The shell agents' commands run in (see ../ai/sandbox.sh).
   smx-ai-sandbox = pkgs.writeShellApplication {
     name = "smx-ai-sandbox";
-    runtimeInputs = [ pkgs.bubblewrap pkgs.xdg-dbus-proxy pkgs.coreutils pkgs.gitMinimal ];
+    runtimeInputs = [ pkgs.bubblewrap pkgs.xdg-dbus-proxy pkgs.coreutils pkgs.getent pkgs.gitMinimal ];
     text = ''
       writable=(${lib.escapeShellArgs cfg.sandbox.writable})
       hidden=(${lib.escapeShellArgs cfg.sandbox.hidden})

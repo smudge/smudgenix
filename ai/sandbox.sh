@@ -21,6 +21,8 @@ if [ "${1:-}" != -c ] || [ "$#" -ne 2 ]; then echo "usage: smx-ai-sandbox -c <co
 command=$2
 shell=${SMX_AI_SHELL:-bash}
 unset SMX_AI_SHELL
+# (Some clients give no HOME.)
+if [ -z "${HOME:-}" ]; then HOME=$(getent passwd "$(id -u)" | cut -d: -f6); export HOME; fi
 runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 cwd=$PWD
 
