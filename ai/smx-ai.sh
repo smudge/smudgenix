@@ -58,6 +58,9 @@ Agents (OpenCode), as part of the desktop.
   revise <task> "<what to change>"
                           Send it back to its session
   defer <task>            Not now
+  verify <task> [--command "<check>"]
+                          Run the project's check on what's in review (a
+                          fresh copy of it, sandboxed), as evidence
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -649,7 +652,7 @@ review() {
 # A task, as JSON, with whether its review is stale: what's changed in its
 # repository since (files, from the frozen revision to the working tree).
 task_view() {
-  local task repo tree last stale="[]"
+  local task repo tree last stale="[]" dead="[]" check pid
   task=$(task_json "$1")
   repo=$(jq -r .dir <<<"$task")
   last=$(jq -c '.rounds | last // empty' <<<"$task")
@@ -657,20 +660,32 @@ task_view() {
     && [ "$tree" != "$(jq -r .tree <<<"$last")" ]; then
     stale=$(git -C "$repo" diff --name-only -z "$(jq -r .candidate <<<"$last")" "$tree" | jq -Rcs 'split("\u0000") | map(select(. != ""))')
   fi
-  jq -c --slurpfile stale <(echo "$stale") '(.rounds | last) as $r | (.rounds | length) as $n
-    | del(.rounds) + {review: $r, rounds: $n, stale: (if $stale[0] == [] then null else $stale[0] end)}' <<<"$task"
+  # (A check still "running" whose process is gone was interrupted.)
+  while read -r check pid; do
+    kill -0 "$pid" 2>/dev/null || dead=$(jq -c --arg c "$check" '. + [$c]' <<<"$dead")
+  done < <(jq -r '.evidence[]? | select(.exit == null and .pid) | "\(.id) \(.pid)"' <<<"${last:-null}")
+  jq -c --slurpfile stale <(echo "$stale") --argjson dead "$dead" '(.rounds | last) as $r | (.rounds | length) as $n
+    | del(.rounds) + {review: $r, rounds: $n, stale: (if $stale[0] == [] then null else $stale[0] end)}
+    | if .review.evidence then .review.evidence |= map(if .id | IN($dead[]) then . + {interrupted: true} else . end) else . end' <<<"$task"
 }
 
 show_task() {
   local view
   view=$(task_view "$1")
-  jq -r --arg home "$HOME" --arg D "$D" --arg N "$N" --arg Y "$Y" --arg A "$A" '
+  jq -r --arg home "$HOME" --arg D "$D" --arg N "$N" --arg Y "$Y" --arg A "$A" --arg G "$G" --arg R "$R" '
     def home: if startswith($home) then "~" + .[($home | length):] else . end;
     .review as $r
     | "\(.title)  \($D)\(.project)  \(.id)\($N)",
       "\(.state)\(if .stale then ", \($Y)stale\($N): \(.stale | length) file(s) changed since it was frozen" else "" end)  \($D)round \($r.round), \($r.base[0:12])..\($r.candidate[0:12])  \(.dir | home)\($N)",
       "",
       (if $r.outcome then "What it says it did \($D)(a claim, not evidence)\($N):", "  " + ($r.outcome.text | gsub("\n"; "\n  ")), "" else empty end),
+      (if ($r.evidence // []) == [] then "Evidence: none yet \($D)(smx ai verify \(.id) runs a check on it)\($N)", ""
+       else "Evidence \($D)(by smx ai, on this revision)\($N):",
+         ($r.evidence[] | "  " + (if .exit == 0 then "\($G)✓\($N) passed"
+           elif .exit != null then "\($R)✗\($N) failed (exit \(.exit))"
+           elif .interrupted then "\($Y)–\($N) interrupted" else "\($A)…\($N) running" end)
+           + ": \(.command)" + (if .finished then " \($D)(\((.finished - .started) / 1000 | floor)s)\($N)" else "" end)
+           + "\n    \($D)its log: \(.log | home)\($N)"), "" end),
       (if ($r.hotspots | length) > 0 then "Where to look:", ($r.hotspots[] | "  \($Y)▲\($N) \(.path)\(if .hunk then " \($D)\(.hunk)\($N)" else "" end): \(.why)"), "" else "Where to look: nothing flagged mechanically (still read the diff).", "" end),
       "Changes (\($r.files | length) files):",
       ($r.files[] | "  \(.status) \(.path)  \($D)+\(.added) -\(.removed)\($N)")' <<<"$view"
@@ -757,6 +772,130 @@ decide() {
       echo "${D}Deferred: $(jq -r .title <<<"$task")${N}"
       ;;
   esac
+}
+
+# --- verify: evidence, not claims ----------------------------------------------
+
+# (A change to a task, under the store's lock: watch, review and other
+# verifies write it too.)
+amend_task() {
+  local id=$1 filter=$2
+  shift 2
+  mkdir -p "$tasks_dir"
+  (
+    flock 9
+    task=$(jq -c "$@" "$filter" "$tasks_dir/$id/task.json") && save_task "$task"
+  ) 9>"$tasks_dir/.lock"
+}
+
+# A project's check, as its files suggest: a fresh copy has no dependencies
+# installed, so those that need them install them first.
+guess_check() {
+  local dir=$1
+  if [ -f "$dir/flake.nix" ]; then
+    echo "nix flake check"
+  elif [ -f "$dir/package.json" ] && jq -e '.scripts.test // empty' "$dir/package.json" >/dev/null 2>&1; then
+    if [ -f "$dir/pnpm-lock.yaml" ]; then echo "pnpm install --frozen-lockfile && pnpm test"
+    elif [ -f "$dir/yarn.lock" ]; then echo "yarn install --frozen-lockfile && yarn test"
+    elif [ -f "$dir/bun.lock" ] || [ -f "$dir/bun.lockb" ]; then echo "bun install --frozen-lockfile && bun run test"
+    elif [ -f "$dir/package-lock.json" ]; then echo "npm ci && npm test"
+    else echo "npm install && npm test"
+    fi
+  elif [ -f "$dir/Cargo.toml" ]; then
+    echo "cargo test"
+  elif [ -f "$dir/go.mod" ]; then
+    echo "go test ./..."
+  elif [ -f "$dir/Makefile" ] && grep -qE '^check:' "$dir/Makefile"; then
+    echo "make check"
+  elif [ -f "$dir/Makefile" ] && grep -qE '^test:' "$dir/Makefile"; then
+    echo "make test"
+  elif [ -f "$dir/pyproject.toml" ] || [ -f "$dir/pytest.ini" ]; then
+    echo "python -m pytest"
+  else
+    return 1
+  fi
+}
+
+# verify: runs the project's check on exactly what's in review (its frozen
+# revision, in a fresh copy, in agents' sandbox: it's their code), and
+# records the outcome and its log on the task: evidence, by smx ai, kept apart
+# from what the agent says. The check is what you last gave the project
+# (--command, remembered), else what its files suggest.
+verify() {
+  local id="" command="" json="" task last repo project round candidate checks work log check_id started status
+  local usage="usage: smx ai verify <task> [--command \"<check>\"] [--json]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --command) command=${2:-}; shift; [ -n "$command" ] || die "$usage" ;;
+      --json) json=1 ;;
+      -*) die "$usage" ;;
+      *) [ -z "$id" ] || die "$usage"; id=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$id" ] || die "$usage"
+  task=$(task_json "$id")
+  last=$(jq -c '.rounds | last // empty' <<<"$task")
+  [ -n "$last" ] || die "$id has nothing in review to verify"
+  repo=$(jq -r .dir <<<"$task") project=$(jq -r '.project // "unknown"' <<<"$task")
+  round=$(jq -r .round <<<"$last") candidate=$(jq -r .candidate <<<"$last")
+  [ -d "$repo" ] || die "no repository $repo" 4
+
+  # (A copy that shares the repository's objects, read-only, and has its own
+  # everything else: nothing the check does reaches the repository.)
+  work=$(mktemp -d "${TMPDIR:-/tmp}/smx-ai-verify.XXXXXX")
+  trap 'rm -rf "${work:-}"' EXIT
+  trap 'exit 130' INT TERM
+  if ! git clone -q --shared --no-checkout "$repo" "$work/copy" 2>/dev/null \
+    || ! git -C "$work/copy" -c advice.detachedHead=false checkout -q --detach "$candidate" 2>/dev/null; then
+    rm -rf "$work"
+    die "couldn't check out $candidate (round $round) from $repo"
+  fi
+  checks="$(dirname "$tasks_dir")/checks"
+  if [ -n "$command" ]; then
+    mkdir -p "$checks"
+    printf '%s\n' "$command" >"$checks/$project"
+  elif [ -s "$checks/$project" ]; then
+    command=$(cat "$checks/$project")
+  elif ! command=$(guess_check "$work/copy"); then
+    rm -rf "$work"
+    die "no check found for $project: give it one (it's remembered) with smx ai verify $id --command \"<check>\""
+  fi
+
+  started=$(now_ms)
+  check_id="chk_$started"
+  log="$tasks_dir/$id/$check_id.log"
+  # shellcheck disable=SC2016 # (jq's variables)
+  amend_task "$id" '.rounds |= map(if .round == $r then .evidence = ((.evidence // []) + [{id: $c, kind: "check",
+      by: "smx ai", command: $cmd, candidate: $cand, started: $s, pid: $pid, log: $log, exit: null}]) else . end)' \
+    --argjson r "$round" --arg c "$check_id" --arg cmd "$command" --arg cand "$candidate" \
+    --argjson s "$started" --argjson pid "$$" --arg log "$log"
+  [ -n "$json" ] || echo "${D}Checking round $round (${candidate:0:12}), a fresh copy, sandboxed:${N} $command"
+
+  run_check() (
+    cd "$work/copy" || exit 1
+    if [ -n "$sandbox" ]; then SMX_AI_SHELL=bash exec "$sandbox" -c "$command"; else exec bash -c "$command"; fi
+  )
+  status=0
+  if [ -z "$json" ] && [ -t 1 ]; then
+    run_check 2>&1 </dev/null | tee "$log" || status=${PIPESTATUS[0]}
+  else
+    run_check >"$log" 2>&1 </dev/null || status=$?
+  fi
+  rm -rf "$work"
+  trap - EXIT INT TERM
+  # shellcheck disable=SC2016 # (jq's variables)
+  amend_task "$id" '.rounds |= map(if .round == $r then .evidence |= map(if .id == $c then . + {exit: $x, finished: $f} | del(.pid) else . end) else . end)
+    | .updated = $f' --argjson r "$round" --arg c "$check_id" --argjson x "$status" --argjson f "$(now_ms)"
+
+  local took=$((($(now_ms) - started) / 1000))
+  took=$([ "$took" -ge 60 ] && echo "$((took / 60))m $((took % 60))s" || echo "${took}s")
+  if [ -n "$json" ]; then
+    jq -cn --arg c "$check_id" --arg cmd "$command" --argjson x "$status" --arg log "$log" '{v: 1, id: $c, command: $cmd, exit: $x, log: $log}'
+  elif [ "$status" -eq 0 ]; then
+    echo "${G}✓${N} Passed: $command ${D}($took, on ${candidate:0:12}; its log: $log)${N}"
+  fi
+  [ "$status" -eq 0 ] || die "the check failed (exit $status, after $took): $command; its log: $log"
 }
 
 # --- threads: new, reply, close, park, context --------------------------------
@@ -1276,6 +1415,7 @@ case "${1:-}" in
   accept) shift; [ "$#" -le 1 ] || die "usage: smx ai accept <task>"; decide accept "${1:-}" ;;
   revise) shift; [ "$#" -le 2 ] || die "usage: smx ai revise <task> \"<what to change>\""; decide revise "${1:-}" "${2:-}" ;;
   defer) shift; [ "$#" -le 1 ] || die "usage: smx ai defer <task>"; decide defer "${1:-}" ;;
+  verify) shift; verify "$@" ;;
   new) shift; new_thread "$@" ;;
   reply) shift; reply "$@" ;;
   park) shift; park "$@" ;;
