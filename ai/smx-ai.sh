@@ -116,9 +116,9 @@ filled() {
       if [ "$project" = "$HOME" ]; then projects[$dir]="~"; else projects[$dir]=$(basename "$project"); fi
     fi
     reply=$(server_get "/api/session/$id/message?limit=10&order=desc&type=assistant" \
-      | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) // null' 2>/dev/null) || reply=null
+      | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) [0:4000] // null' 2>/dev/null) || reply=null
     compaction=$(server_get "/api/session/$id/message?limit=3&order=desc&type=compaction" \
-      | jq -c 'first(.data[] | select(.status == "completed") | .summary) // null' 2>/dev/null) || compaction=null
+      | jq -c 'first(.data[] | select(.status == "completed") | .summary) [0:8000] // null' 2>/dev/null) || compaction=null
     session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" --argjson c "${compaction:-null}" \
       '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r, about: $c}' <<<"$session")
     if [ "$running" = true ]; then
@@ -550,7 +550,7 @@ latest_reply() {
 # round of it): what changed, frozen; where to look; what it says it did.
 review() {
   local session="" since="" json="" auto="" sess dir repo title created id task round
-  local base candidate tree change hotspots reply project accepted
+  local base candidate tree work project accepted
   local usage="usage: smx ai review <session> [--since <commit>] [--json]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -617,15 +617,19 @@ review() {
     [ -n "$auto" ] || echo "${D}Nothing to review: no changes since ${base:0:12}.${N}"
     return
   fi
-  change=$(change_json "$repo" "$base" "$candidate")
-  hotspots=$(jq -c -f "$hotspots_filter" <<<"$change")
-  reply=$(latest_reply "$session") || reply=null
+  # (Through files: a change easily outgrows an argument's 128 KiB.)
+  work=$(mktemp -d)
+  change_json "$repo" "$base" "$candidate" >"$work/change"
+  jq -c -f "$hotspots_filter" "$work/change" >"$work/hotspots"
+  latest_reply "$session" >"$work/reply" 2>/dev/null || echo null >"$work/reply"
+  [ -s "$work/reply" ] || echo null >"$work/reply"
   task=$(jq -c --argjson round "$round" --arg base "$base" --arg candidate "$candidate" --arg tree "$tree" \
-    --argjson change "$change" --argjson hotspots "$hotspots" --argjson reply "${reply:-null}" --argjson now "$(now_ms)" \
+    --slurpfile change "$work/change" --slurpfile hotspots "$work/hotspots" --slurpfile reply "$work/reply" --argjson now "$(now_ms)" \
     '.state = "in-review" | .updated = $now
      | .rounds += [{round: $round, base: $base, candidate: $candidate, tree: $tree, frozen: $now,
-         outcome: (if $reply then {text: $reply, by: "agent"} else null end),
-         files: $change.files, hotspots: $hotspots}]' <<<"$task")
+         outcome: (if $reply[0] then {text: $reply[0], by: "agent"} else null end),
+         files: $change[0].files, hotspots: $hotspots[0]}]' <<<"$task")
+  rm -rf "$work"
   save_task "$task"
   [ -z "$auto" ] || return 0
   if [ -n "$json" ]; then task_view "$id"; else show_task "$id"; fi
@@ -642,8 +646,8 @@ task_view() {
     && [ "$tree" != "$(jq -r .tree <<<"$last")" ]; then
     stale=$(git -C "$repo" diff --name-only -z "$(jq -r .candidate <<<"$last")" "$tree" | jq -Rcs 'split("\u0000") | map(select(. != ""))')
   fi
-  jq -c --argjson stale "$stale" '(.rounds | last) as $r | (.rounds | length) as $n
-    | del(.rounds) + {review: $r, rounds: $n, stale: (if $stale == [] then null else $stale end)}' <<<"$task"
+  jq -c --slurpfile stale <(echo "$stale") '(.rounds | last) as $r | (.rounds | length) as $n
+    | del(.rounds) + {review: $r, rounds: $n, stale: (if $stale[0] == [] then null else $stale[0] end)}' <<<"$task"
 }
 
 show_task() {
@@ -675,12 +679,11 @@ task_command() {
     if [ -n "$json" ]; then task_view "$id"; else show_task "$id"; fi
     return
   fi
-  local tasks="[]" file
-  for file in "$tasks_dir"/*/task.json; do
+  local tasks file
+  tasks=$(for file in "$tasks_dir"/*/task.json; do
     [ -f "$file" ] || continue
-    tasks=$(jq -c --argjson t "$(task_view "$(jq -r .id "$file")")" '. + [$t]' <<<"$tasks")
-  done
-  tasks=$(jq -c 'sort_by(-.updated)' <<<"$tasks")
+    task_view "$(jq -r .id "$file")"
+  done | jq -cs 'sort_by(-.updated)')
   if [ -n "$json" ]; then
     jq -c '{v: 1, tasks: .}' <<<"$tasks"
   elif [ "$tasks" = "[]" ]; then
