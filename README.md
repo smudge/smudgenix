@@ -90,10 +90,16 @@ credentials need it), so take care what you let agents read. Edits and
 writes that go through OpenCode's own tools, not a shell, aren't sandboxed:
 its permission rules govern those.
 
-On the desktop, the bar stays quiet unless something needs you, waits for
-review, or is at work, and only interrupts (a notification) when an agent
-needs you or fails; Mod+A shows them all, with recent sessions to return
-to. `smx ai status`, `watch` and `open` do the same from a terminal.
+On the desktop, the bar's agents capsule is grey unless something needs you,
+waits for review, or is at work, and you're only interrupted (a notification)
+when an agent needs you or fails. Mod+A (or a click on it) shows your
+threads of work in the project you're in (Tab for others, or all), by whose
+turn it is: yours (it needs you, or it's back: work to review, an answer),
+away (an agent's at it), or parked. A thread stays until you close it (`c`);
+`n` starts one (Enter: in the background, to come back when it's done;
+Shift+Enter: in a TUI), `r` tells one more, `z` parks one. `smx ai new`,
+`reply`, `park`, `close`, `status`, `watch` and `open` do the same from a
+terminal.
 
 When an agent asks permission, its notification opens Mod+A on it (so one
 appearing as you type can't answer anything, and one you missed is a Mod+A
