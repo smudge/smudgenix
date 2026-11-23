@@ -18,6 +18,7 @@ let
       ./display.nix
       ./inputs.nix
       ./desktop
+      ./ai.nix
       ./userland.nix
       ./smx.nix
       ./gaming.nix

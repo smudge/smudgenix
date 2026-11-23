@@ -3,7 +3,8 @@
 lib.mkIf config.smudgenix.ai.enable {
   home.packages = with pkgs; [
     claude-code
-    opencode
+    # (Using the OS's server, where it has one; see ../../ai/opencode.sh.)
+    (import ../../ai/opencode.nix pkgs)
   ];
 
   # Claude Code's personal (uncommitted) project settings.
