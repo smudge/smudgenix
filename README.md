@@ -65,8 +65,8 @@ Updates are driven by what is pushed upstream:
 
 ## Agents
 
-OpenCode's server runs as each user's `opencode` service, which `opencode`
-starts (and uses) on demand, and agents' commands run without the desktop's
+OpenCode's server runs as each user's `opencode` service, from login (and
+`opencode` starts it, if it's stopped, and uses it), and agents' commands run without the desktop's
 environment, even the one a client passes on
 (`smudgenix.ai.server.unsetEnvironment`), so nothing they run finds niri or
 your windows by accident. Nor can they reach its sockets (only the session

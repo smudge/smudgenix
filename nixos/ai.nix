@@ -1,6 +1,6 @@
 # AI agents, as part of the OS. OpenCode's server runs as each user's
-# `opencode` service, which `opencode` starts (and uses) on demand (see
-# ../ai/opencode.sh), with the session's environment minus the desktop's, out of
+# `opencode` service, from login (and `opencode` starts it if it's stopped,
+# and uses it: see ../ai/opencode.sh), with the session's environment minus the desktop's, out of
 # reach of its sockets and of what runs at login; and each of agents' shell
 # commands runs in a sandbox (../ai/sandbox.sh), away from the server's own
 # files and processes, the rest of the bus, and all but the project.
@@ -157,6 +157,11 @@ in
     systemd.user.services.opencode = {
       description = "OpenCode server, for agents";
       unitConfig.ConditionUser = "!@system";
+      # Running from login (the graphical session's, once niri's passed its
+      # environment on, so agents' tools are on PATH), not only when something
+      # needs it: the bar follows it, and work in the background goes on.
+      wantedBy = [ "graphical-session.target" ];
+      after = [ "graphical-session.target" ];
       # The session's PATH (the user's tools, for agents), not a unit's.
       environment.PATH = lib.mkForce null;
       environment.OPENCODE_CONFIG = "${opencodeConfig}";
