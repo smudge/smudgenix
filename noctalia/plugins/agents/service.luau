@@ -95,16 +95,34 @@ function update()
 end
 noctalia.setUpdateInterval(500)
 
+-- A request, as it is: what it'd do, and where.
+local function described(request)
+  local what = request.action .. ": " .. table.concat(request.resources or {}, ", ")
+  return request.cwd and (what .. "\nin " .. request.cwd) or what
+end
+
 -- What changed for you, if anything, from before to after: unless you're
--- looking at it, or said not to (the plugin's notify setting). (A
--- subagent's finishing is its parent's news, not yours.)
+-- looking at it, or said not to (the plugin's notify setting). Each new
+-- request gets Deny and Show, never Allow (so one appearing as you type
+-- can't be allowed by accident: that's the overlay's). (A subagent's
+-- finishing is its parent's news, not yours.)
 local function tell(before, after)
+  if lookingAt(after) or noctalia.getConfig("notify") == false then return end
+  local asked = {}
+  for _, request in (before and before.permissions) or {} do
+    asked[request.id] = true
+  end
+  for _, request in after.permissions or {} do
+    if not asked[request.id] then
+      noctalia.notify("Needs permission: " .. title(after), described(request), {
+        actions = { { id = "deny", label = "Deny" }, { id = "show", label = "Show" } },
+        onAction = "onNotificationAction", context = request.id,
+      })
+    end
+  end
   local was = before and before.state
-  if after.state == was or lookingAt(after) or noctalia.getConfig("notify") == false then return end
-  if after.state == "needs-permission" then
-    local p = after.permissions[#after.permissions]
-    notify(noctalia.notify, "Needs permission: " .. title(after), p and (p.action .. " " .. table.concat(p.resources or {}, ", ")) or nil, after.id)
-  elseif after.state == "needs-input" then
+  if after.state == was then return end
+  if after.state == "needs-input" then
     local f = after.forms[#after.forms]
     notify(noctalia.notify, "Asks: " .. title(after), f and f.title or nil, after.id)
   elseif after.parent == nil and after.unseen and (after.state == "done" or after.state == "failed") then
@@ -113,9 +131,12 @@ local function tell(before, after)
   end
 end
 
+-- (Open: a session's id; Deny: a request's.)
 function onNotificationAction(action, id)
   if action == "show" then
     noctalia.togglePanel("smudgenix/agents:sessions")
+  elseif action == "deny" and id then
+    noctalia.runAsync({ "smx", "ai", "deny", id })
   elseif id then
     noctalia.runAsync({ "smx", "ai", "open", id })
   end

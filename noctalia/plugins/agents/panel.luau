@@ -80,6 +80,33 @@ local function chip(text)
   })
 end
 
+-- Answering a request (smx ai allow|deny): once, always (its save patterns,
+-- in its project, from now on), or deny.
+local function answer(request, how)
+  if how == "deny" then
+    noctalia.runAsync({ "smx", "ai", "deny", request.id })
+  elseif how == "always" then
+    noctalia.runAsync({ "smx", "ai", "allow", request.id, "--always" })
+  else
+    noctalia.runAsync({ "smx", "ai", "allow", request.id })
+  end
+end
+
+-- A request, as it is (not the agent's description of it): what it'd do,
+-- where, and the answers.
+local function request(r)
+  local always = table.concat((#(r.save or {}) > 0 and r.save) or r.resources or {}, ", ")
+  return ui.column({ gap = 4, padding = 8, radius = 6, fill = "tertiary/0.1" }, {
+    ui.label({ text = r.action .. ": " .. table.concat(r.resources or {}, ", "), fontSize = 12, maxLines = 4 }),
+    r.cwd and ui.label({ text = "in " .. r.cwd, fontSize = 11, color = "on_surface/0.6", maxLines = 1 }) or ui.box({ height = 0 }),
+    ui.row({ gap = 6 }, {
+      ui.button({ text = "Allow", variant = "primary", controlSize = "sm", onClick = function() answer(r, "once") end }),
+      ui.button({ text = "Always", variant = "outline", controlSize = "sm", tooltip = `Allow {r.action} {always} in this project from now on`, onClick = function() answer(r, "always") end }),
+      ui.button({ text = "Deny", variant = "destructive", controlSize = "sm", onClick = function() answer(r, "deny") end }),
+    }),
+  })
+end
+
 local function row(entry, index, children, now)
   local session, depth = entry.session, entry.depth
   local mark = marks[session.state] or marks.idle
@@ -130,6 +157,10 @@ local function row(entry, index, children, now)
   }, { ui.glyph({ name = isExpanded(session, children) and "chevron-down" or "chevron-right", size = 14, color = "on_surface/0.6" }) })
     or ui.box({ width = 14, height = 14 })
 
+  for _, r in session.permissions or {} do
+    table.insert(lines, request(r))
+  end
+
   local parts = {}
   if depth > 0 then table.insert(parts, ui.box({ width = 22 * depth, height = 1 })) end
   table.insert(parts, toggle)
@@ -141,6 +172,11 @@ local function row(entry, index, children, now)
     fill = isSelected and "primary/0.15" or nil,
     onClick = function() show(session) end,
   }, parts)
+end
+
+-- The first request a row's session is waiting on, if any.
+local function asks(entry)
+  return entry and entry.session.permissions and entry.session.permissions[1]
 end
 
 local function heading(text)
@@ -205,7 +241,8 @@ function render()
   panel.render(ui.column({ padding = 14, gap = 6 }, {
     ui.label({ text = "Agents", fontSize = 15, fontWeight = "bold" }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "row-" .. selected }, rows),
-    ui.label({ text = "↑↓ choose  ·  →← subagents  ·  Enter open  ·  Esc close", fontSize = 11, color = "on_surface/0.5" }),
+    ui.label({ text = asks(shown[selected]) and "a allow  ·  Shift+A always  ·  d deny  ·  ↑↓ choose  ·  Enter open  ·  Esc close"
+      or "↑↓ choose  ·  →← subagents  ·  Enter open  ·  Esc close", fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
 
@@ -256,6 +293,9 @@ function onKey(chord, pressed)
     elseif entry.parent then
       selected = entry.parent
     end
+  elseif (chord == "a" or chord == "Shift+A" or chord == "Shift+a" or chord == "d") and asks(entry) then
+    answer(asks(entry), chord == "d" and "deny" or chord == "a" and "once" or "always")
+    return
   elseif chord == "Return" then
     if entry then show(entry.session) end
     return
