@@ -99,7 +99,10 @@ away (an agent's at it), or parked. A thread stays until you close it (`c`);
 `n` starts one (Enter: in the background, to come back when it's done;
 Shift+Enter: in a TUI), `r` tells one more, `z` parks one. `smx ai new`,
 `reply`, `park`, `close`, `status`, `watch` and `open` do the same from a
-terminal.
+terminal. Closing a thread archives its session (nothing's deleted), and
+`smx ai history` shows your threads day by day, closed ones too: when, in
+which project, how they ended (their review's outcome) and what they cost,
+subagents included (`--days`, `--since`, `--project`, `--json`).
 
 When an agent asks permission, its notification opens Mod+A on it (so one
 appearing as you type can't answer anything, and one you missed is a Mod+A

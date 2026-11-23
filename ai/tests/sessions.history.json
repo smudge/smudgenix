@@ -1,0 +1,28 @@
+{
+  "since": 1000,
+  "projects": {"/home/example/src/app": "app", "/home/example/src/site": "site"},
+  "tasks": [
+    {"id": "tsk_1", "session": "ses_a", "state": "in-review", "updated": 1500, "rounds": [{}]},
+    {"id": "tsk_2", "session": "ses_a", "state": "accepted", "updated": 1900, "rounds": [{}, {}]}
+  ],
+  "sessions": [
+    {"id": "ses_a", "title": "Fix the login form", "location": {"directory": "/home/example/src/app"},
+     "time": {"created": 1100, "updated": 1800, "busy": 1700, "idle": 1800, "archived": 2000},
+     "cost": 0.5, "tokens": {"input": 1000, "output": 200, "reasoning": 0, "cache": {"read": 5000, "write": 0}},
+     "model": {"id": "claude-opus-5-5", "providerID": "anthropic"}},
+    {"id": "ses_a1", "parentID": "ses_a", "title": "Find the form", "location": {"directory": "/home/example/src/app"},
+     "time": {"created": 1200, "updated": 1300}, "cost": 0.25, "tokens": {"input": 300, "output": 50, "reasoning": 10, "cache": {"read": 0, "write": 0}}},
+    {"id": "ses_a2", "parentID": "ses_a1", "title": "Read it", "location": {"directory": "/home/example/src/app"},
+     "time": {"created": 1250, "updated": 1950}, "cost": 0.25, "tokens": {"input": 100, "output": 10, "reasoning": 0, "cache": {"read": 0, "write": 0}}},
+    {"id": "ses_b", "title": "Try a dark theme", "location": {"directory": "/home/example/src/site"},
+     "time": {"created": 2100, "updated": 2300, "busy": 2300, "idle": 2200}, "cost": 0, "tokens": {"input": 10, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+     "model": {"id": "deepseek-v4.1-flash-free", "providerID": "opencode"}},
+    {"id": "ses_b", "title": "Try a dark theme", "location": {"directory": "/home/example/src/site"},
+     "time": {"created": 2100, "updated": 2300, "busy": 2300, "idle": 2200}, "cost": 0, "tokens": {"input": 10, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}},
+     "model": {"id": "deepseek-v4.1-flash-free", "providerID": "opencode"}},
+    {"id": "ses_c", "location": {"directory": "/tmp"},
+     "time": {"created": 2400, "updated": 2500, "busy": 2410, "idle": 2500}},
+    {"id": "ses_old", "title": "Before the window", "location": {"directory": "/home/example/src/app"},
+     "time": {"created": 900, "updated": 1200}}
+  ]
+}

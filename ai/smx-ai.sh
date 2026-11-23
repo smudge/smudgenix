@@ -36,6 +36,9 @@ Agents (OpenCode), as part of the desktop.
   close <session> [--accept | --discard]
                           End it (deciding its review, if it has one)
   context --json          Where you are: the focused window's project
+  history [--days <n> | --since <date>] [--project <name>] [--json]
+                          Your threads, day by day, closed ones too (by
+                          default, this week)
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
   open <session>          Show a session: its TUI's window, or a new one
@@ -909,6 +912,87 @@ context() {
   fi
 }
 
+# --- history ------------------------------------------------------------------
+
+# history: your threads, day by day, closed ones too (without reopening
+# them): when, where, how they ended, and what they cost.
+history_command() {
+  local days=7 since="" project="" json="" since_ms work page cursor="" dir
+  local usage="usage: smx ai history [--days <n> | --since <date>] [--project <name>] [--json]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --days) days=${2:-}; shift; [[ "$days" =~ ^[1-9][0-9]*$ ]] || die "$usage" ;;
+      --since) since=${2:-}; shift; [ -n "$since" ] || die "$usage" ;;
+      --project) project=${2:-}; shift; [ -n "$project" ] || die "$usage" ;;
+      --json) json=1 ;;
+      *) die "$usage" ;;
+    esac
+    shift
+  done
+  if [ -n "$since" ]; then
+    since_ms=$(date -d "$since" +%s 2>/dev/null) || die "not a date: $since"
+  else
+    since_ms=$(date -d "$(date +%F) -$((days - 1)) days" +%s)
+  fi
+  since_ms=$((since_ms * 1000))
+  need_server
+  work=$(mktemp -d)
+  # (Newest-updated first: a thread started since then was updated since.)
+  while :; do
+    page=$(server_get "/api/session?limit=100${cursor:+&cursor=$cursor}") || { rm -rf "$work"; die "couldn't list sessions"; }
+    jq -c '.data[]' <<<"$page" >>"$work/sessions"
+    [ "$(jq --argjson s "$since_ms" '.data | length > 0 and (map(.time.updated) | min) >= $s' <<<"$page")" = true ] || break
+    cursor=$(jq -r '.cursor.next // empty' <<<"$page")
+    [ -n "$cursor" ] || break
+  done
+  jq -r '.location.directory // empty' "$work/sessions" | sort -u | while IFS= read -r dir; do
+    printf '%s\t%s\n' "$dir" "$(project_of "$dir")"
+  done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries' >"$work/projects"
+  for dir in "$tasks_dir"/*/task.json; do [ -f "$dir" ] && cat "$dir"; done | jq -cs . >"$work/tasks"
+  jq -s . "$work/sessions" >"$work/all"
+  jq -c -n --argjson since "$since_ms" --arg p "$project" \
+    --slurpfile s "$work/all" --slurpfile pr "$work/projects" --slurpfile t "$work/tasks" \
+    '{since: $since, sessions: $s[0], projects: $pr[0], tasks: $t[0]}' >"$work/in"
+  jq -c --arg p "$project" -f "$history_filter" "$work/in" \
+    | jq -c --arg p "$project" 'if $p == "" then . else .threads |= map(select(.project == $p)) end' >"$work/out"
+  if [ -n "$json" ]; then cat "$work/out"; rm -rf "$work"; return; fi
+  jq -r --arg A "$A" --arg D "$D" --arg G "$G" --arg Y "$Y" --arg N "$N" --arg p "$project" '
+    def secs: . / 1000 | floor;
+    def day: secs | strflocaltime("%a %-d %b");
+    def clock: secs | strflocaltime("%H:%M");
+    def money: if . == 0 then null else (. * 100 | round) as $c
+      | "$\($c / 100 | floor).\($c % 100 | tostring | if length < 2 then "0" + . else . end)" end;
+    def count: if . >= 1000000 then "\(. / 100000 | round / 10)M" elif . >= 1000 then "\(. / 1000 | round)k" else tostring end;
+    def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
+    def totals: [plural(length; "thread"),
+      (([.[].tokens] | add) as $t | if $t > 0 then "\($t | count) tokens" else empty end),
+      ([.[].cost] | add | money // empty)] | join(" · ");
+    def outcome: {"in-review": "in review", revising: "revising", deferred: "parked, to review",
+      accepted: "accepted", discarded: "review discarded"}[.state] // .state;
+    def span: (.created | clock) as $from | (.updated | clock) as $to
+      | if (.created | secs | strflocaltime("%F")) != (.updated | secs | strflocaltime("%F"))
+        then "\($from)–\(.updated | day) \($to)"
+        elif $from == $to then "\($from)      " else "\($from)–\($to)" end;
+    .threads as $all
+    | if $all == [] then "\($D)No threads since \(.since | day)\(if $p == "" then "" else " in \($p)" end).\($N)"
+      else
+        ($all | group_by(.created | secs | strflocaltime("%F")) | reverse[]
+         | sort_by(-.created)
+         | "\($A)\(.[0].created | day)\($N)  \($D)\(totals)\($N)",
+           (.[] | "  \(span)  \(.title // "(untitled)")\(if $p == "" and .project then "  \($A)\(.project)\($N)" else "" end)",
+             "               \($D)\([
+               (if .state == "at work" then "\($Y)at work\($D)" elif .state == "closed" then "closed" else "\($N)open\($D)" end),
+               (.task | if . then outcome + (if .rounds > 1 then " (\(.rounds) rounds)" else "" end) else empty end),
+               (if .subagents > 0 then plural(.subagents; "subagent") else empty end),
+               (if .tokens > 0 then "\(.tokens | count) tokens" else empty end),
+               (.cost | money // empty),
+               (.model // empty)] | join(" · "))\($N)"),
+           ""),
+        "\($D)Since \(.since | day): \($all | totals), \($all | map(select(.state == "closed")) | length) closed\($N)"
+      end' "$work/out"
+  rm -rf "$work"
+}
+
 # --- allow, deny, allowed -----------------------------------------------------
 
 # Permission requests (JSON lines in and out, as the server has them), with
@@ -1197,6 +1281,7 @@ case "${1:-}" in
   park) shift; park "$@" ;;
   close) shift; close_thread "$@" ;;
   context) shift; context "$@" ;;
+  history) shift; history_command "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac
