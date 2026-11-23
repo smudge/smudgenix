@@ -1,8 +1,9 @@
 # AI agents, as part of the OS. OpenCode's server runs as each user's
 # `opencode` service, which `opencode` starts (and uses) on demand (see
-# ../ai/opencode.sh), with the session's environment minus the desktop's, so
-# nothing agents run finds niri or the windows by accident. (It isn't a
-# sandbox: the sockets are still there to find, as is the session bus.)
+# ../ai/opencode.sh), with the session's environment minus the desktop's, out of
+# reach of its sockets and of what runs at login; and each of agents' shell
+# commands runs in a sandbox (../ai/sandbox.sh), away from the server's own
+# files and processes, the rest of the bus, and all but the project.
 { config, lib, pkgs, ... }:
 
 let
@@ -16,9 +17,23 @@ let
   opencodeConfig = pkgs.writeText "opencode.json" (builtins.toJSON {
     plugins = [{
       package = "${../ai/opencode-plugin}";
-      options = { inherit (cfg.server) unsetEnvironment; };
+      options = {
+        inherit (cfg.server) unsetEnvironment;
+        sandbox = if cfg.sandbox.enable then lib.getExe smx-ai-sandbox else null;
+      };
     }];
   });
+
+  # The shell agents' commands run in (see ../ai/sandbox.sh).
+  smx-ai-sandbox = pkgs.writeShellApplication {
+    name = "smx-ai-sandbox";
+    runtimeInputs = [ pkgs.bubblewrap pkgs.xdg-dbus-proxy pkgs.coreutils pkgs.gitMinimal ];
+    text = ''
+      writable=(${lib.escapeShellArgs cfg.sandbox.writable})
+      hidden=(${lib.escapeShellArgs cfg.sandbox.hidden})
+      bus_talk=(${lib.escapeShellArgs cfg.sandbox.busTalk})
+    '' + builtins.readFile ../ai/sandbox.sh;
+  };
 
   theme = import ../theme pkgs;
 
@@ -88,6 +103,40 @@ in
         manager's, audio, …) is out of reach: unsetting variables only hides
         them, as they're easily guessed.
       '';
+    };
+    sandbox = {
+      enable = lib.mkEnableOption "a sandbox for each of agents' shell commands (see ../ai/sandbox.sh)" // { default = true; };
+      writable = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ".cache" ".cargo" ".rustup" ".npm" ".local/share/pnpm" "go" ];
+        description = ''
+          What in your home (besides the project) agents' commands can
+          change: by default, tools' caches.
+        '';
+      };
+      hidden = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [
+          ".local/share/opencode" ".local/state/opencode" ".local/share/keyrings"
+          ".gnupg/private-keys-v1.d" ".password-store" ".mozilla" ".config/chromium" ".config/google-chrome"
+        ];
+        description = ''
+          What in your home agents' commands can't see at all: by default,
+          OpenCode's own files (its password, and saved permissions), keyrings
+          and private keys, and browsers' profiles. (Of ~/.ssh, they only
+          ever see public keys, known hosts and config.)
+        '';
+      };
+      busTalk = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ "org.freedesktop.secrets" ];
+        description = ''
+          What on the session bus agents' commands can reach: by default the
+          keyring, which git's and gh's credentials need (and which has every
+          other secret too). Not `systemd-run --user`, notifications or
+          portals.
+        '';
+      };
     };
     server.readOnly = lib.mkOption {
       type = lib.types.listOf lib.types.str;

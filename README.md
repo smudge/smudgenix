@@ -76,13 +76,19 @@ autostart: `server.readOnly`), or gain privileges.
 `opencode service start|stop|restart` goes through the service, and
 `smx ai doctor` checks all of it.
 
-That isn't a sandbox yet. Through the session bus, an agent's command can
-still reach the keyring (and so `gh` and git's credentials, and every other
-secret) and `systemd-run --user` (a process outside all of the above); it
-can sign with the SSH agent; and it shares the server's files, including its
-password and its saved permissions, so it could answer its own requests.
-OpenCode's permission prompts are advice to a cooperative agent, not a
-boundary, until each command runs in its own sandbox (planned).
+And each command runs in its own sandbox (`smudgenix.ai.sandbox`, through
+smudgenix's OpenCode plugin): everything read-only but its project, tools'
+caches and `/tmp`; none of OpenCode's own files (its password, its saved
+permissions), keyrings, private keys or browsers' profiles; its own
+processes (not the server's); and of the session bus, only the keyring. So
+an agent can't answer its own requests, or start something outside the
+sandbox (`systemd-run --user`).
+
+What it can still do: read the rest of your home, use the network, sign with
+the SSH agent, and ask the keyring for any secret (git's and `gh`'s
+credentials need it), so take care what you let agents read. Edits and
+writes that go through OpenCode's own tools, not a shell, aren't sandboxed:
+its permission rules govern those.
 
 On the desktop, the bar shows what agents are doing (and tells you when one
 needs you or finishes), and Mod+A shows them, with recent sessions to return
