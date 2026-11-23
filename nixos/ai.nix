@@ -1,7 +1,8 @@
 # AI agents, as part of the OS. OpenCode's server runs as each user's
 # `opencode` service, which `opencode` starts (and uses) on demand (see
-# ../ai/opencode.sh), with the session's environment, but without access to
-# the desktop: agents can't drive niri, or read or type into windows.
+# ../ai/opencode.sh), with the session's environment minus the desktop's, so
+# nothing agents run finds niri or the windows by accident. (It isn't a
+# sandbox: the sockets are still there to find, as is the session bus.)
 { config, lib, pkgs, ... }:
 
 let
