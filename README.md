@@ -90,8 +90,9 @@ credentials need it), so take care what you let agents read. Edits and
 writes that go through OpenCode's own tools, not a shell, aren't sandboxed:
 its permission rules govern those.
 
-On the desktop, the bar shows what agents are doing (and tells you when one
-needs you or finishes), and Mod+A shows them, with recent sessions to return
+On the desktop, the bar stays quiet unless something needs you, waits for
+review, or is at work, and only interrupts (a notification) when an agent
+needs you or fails; Mod+A shows them all, with recent sessions to return
 to. `smx ai status`, `watch` and `open` do the same from a terminal.
 
 When an agent asks permission, its notification opens Mod+A on it (so one
@@ -100,6 +101,18 @@ away), which shows the request as it is (the command, or the files, and
 where), to allow or deny; or `smx ai allow|deny <request>`. `--always` allows the like in that project from
 now on (OpenCode keeps these); `smx ai allowed` lists them, and
 `smx ai allowed revoke <id>` takes one back.
+
+An agent finishing isn't its work being done: you review it. `smx ai review
+<session>` (or `p` on it in Mod+A) makes its work a task in review: the
+change, frozen as a commit of the working tree (untracked files too; your
+branch and files untouched), from where it started; the places worth a
+closer look (dependencies, deleted or skipped tests, migrations, CI,
+security-sensitive files and lines, large changes); and what the agent says
+it did, marked as its claim. `smx ai diff <task>` shows it; `accept`,
+`revise <task> "<what to change>"` (back to its session) or `defer` decide.
+A review that's changed since it was frozen is stale, and can't be accepted
+until you review it again. Tasks live in `~/.local/share/smudgenix/tasks`,
+which agents' commands can't change.
 
 ## smx
 
