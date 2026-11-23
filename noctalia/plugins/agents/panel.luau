@@ -106,8 +106,20 @@ local function row(entry, index, children, now)
     ui.row({ gap = 8, align = "center" }, top),
     ui.label({ text = table.concat(details, "  ·  "), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }),
   }
-  if session.last then
-    table.insert(lines, ui.label({ text = session.last, fontSize = 11, color = "on_surface/0.75", maxLines = isSelected and 3 or 1 }))
+  -- Its line: its latest reply if that's news (finished unseen, or asking
+  -- you), else what it's about (from its latest compaction), else that reply.
+  -- (Selected: both.)
+  local news = session.last and (session.unseen or needsYou(session))
+  local function say(text, maxLines)
+    table.insert(lines, ui.label({ text = text, fontSize = 11, color = "on_surface/0.75", maxLines = maxLines }))
+  end
+  if isSelected then
+    if session.about then say(session.about, 3) end
+    if session.last then say((session.about and "Last: " or "") .. session.last, 3) end
+  elseif news or not session.about then
+    if session.last then say(session.last, 1) end
+  else
+    say(session.about, 1)
   end
 
   local toggle = kids and ui.row({
