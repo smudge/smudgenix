@@ -70,20 +70,33 @@ watch_raw() {
 }
 
 # The server's state now, as an smx.snapshot (see ./normalize.jq): its
-# running sessions, and what they're waiting on.
+# sessions that are running (with what they're waiting on), or have finished
+# since anyone looked at them. (Of the recent ones, and not subagents', whose
+# sessions report to theirs.)
 snapshot() {
-  local url ids id
+  local url sessions session id
   url=$(server_url)
   get() { server_curl -sf "$url$1"; }
-  ids=$(get /api/session/active | jq -r '.data | keys[]') || return 1
-  for id in $ids; do
-    jq -n --argjson s "$(get "/api/session/$id")" \
-      --argjson p "$(get "/api/session/$id/permission" || echo '{"data":[]}')" \
-      --argjson f "$(get "/api/session/$id/form" || echo '{"data":[]}')" \
-      '$s.data | {id, title, dir: .location.directory, parent: .parentID, running: true,
-        permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
-        forms: [$f.data[] | {id, title}]}'
-  done | jq -cs '{type: "smx.snapshot", sessions: .}'
+  sessions=$(get "/api/session?limit=50" | jq -c '.data[]
+    | select(.parentID == null)
+    | (.time.busy // 0) as $busy | (.time.idle // 0) as $idle
+    | ($busy > $idle) as $running
+    | {id, title, dir: .location.directory, parent: null, running: $running,
+       outcome: ({succeeded: "done", failed: "failed"}[.outcome // ""] // "idle"),
+       unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")}
+    | select(.running or .unseen)') || return 1
+  while IFS= read -r session; do
+    [ -n "$session" ] || continue
+    if [ "$(jq -r .running <<<"$session")" = true ]; then
+      id=$(jq -r .id <<<"$session")
+      jq -c --argjson p "$(get "/api/session/$id/permission" || echo '{"data":[]}')" \
+        --argjson f "$(get "/api/session/$id/form" || echo '{"data":[]}')" \
+        '. + {permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
+              forms: [$f.data[] | {id, title}]}' <<<"$session"
+    else
+      echo "$session"
+    fi
+  done <<<"$sessions" | jq -cs '{type: "smx.snapshot", sessions: .}'
 }
 
 server_state() {

@@ -1,6 +1,7 @@
 {"type":"smx.snapshot","sessions":[{"id":"ses_a","title":"Investigate the slow query","dir":"/home/example/src/project","running":true}]}
 {"type":"session.step.started","data":{"sessionID":"ses_a"}}
 {"type":"session.execution.succeeded","data":{"sessionID":"ses_a"}}
+{"type":"session.viewed","data":{"sessionID":"ses_a","idle":1795397841822}}
 {"type":"session.created","location":{"directory":"/home/example/src/other"},"data":{"sessionID":"ses_b","title":"Update the domains","location":{"directory":"/home/example/src/other"}}}
 {"type":"session.execution.started","data":{"sessionID":"ses_b"}}
 {"type":"permission.asked","data":{"id":"per_1","sessionID":"ses_b","action":"shell","resources":["bin/sync-domains"],"save":["bin/sync-domains"]}}

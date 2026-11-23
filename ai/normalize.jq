@@ -9,13 +9,14 @@
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
 #
-# where <session> is {id, title, dir, parent, state, permissions, forms}, and
-# its state is needs-permission, needs-input, working, done, failed or idle.
+# where <session> is {id, title, dir, parent, state, unseen, permissions,
+# forms}, its state is needs-permission, needs-input, working, done, failed or
+# idle, and unseen is whether it's finished since anyone last looked at it.
 #
 #   jq -cn --unbuffered -f normalize.jq
 
 def blank($id; $dir):
-  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", permissions: [], forms: []};
+  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, permissions: [], forms: []};
 
 def public:
   {id, title, dir, parent,
@@ -23,7 +24,7 @@ def public:
            elif (.forms | length) > 0 then "needs-input"
            elif .running then "working"
            else .outcome end),
-   permissions, forms};
+   unseen, permissions, forms};
 
 def apply($e):
   if $e.type == "session.created" then
@@ -31,10 +32,12 @@ def apply($e):
     | .dir = ($e.data.location.directory // .dir)
     | .parent = ($e.data.parentID // null)
   elif $e.type == "session.renamed" then .title = $e.data.title
-  elif $e.type == "session.execution.started" then .running = true
-  elif $e.type == "session.execution.succeeded" then .running = false | .outcome = "done"
-  elif $e.type == "session.execution.failed" then .running = false | .outcome = "failed"
+  elif $e.type == "session.execution.started" then .running = true | .unseen = false
+  elif $e.type == "session.execution.succeeded" then .running = false | .outcome = "done" | .unseen = true
+  elif $e.type == "session.execution.failed" then .running = false | .outcome = "failed" | .unseen = true
   elif $e.type == "session.execution.interrupted" then .running = false | .outcome = "idle"
+  # (Seen in a client, e.g. the TUI.)
+  elif $e.type == "session.viewed" then .unseen = false
   # (Asked again if a snapshot already had it.)
   elif $e.type == "permission.asked" then
     ($e.data | {id, action, resources, save: (.save // [])}) as $p

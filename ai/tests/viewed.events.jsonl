@@ -1,0 +1,5 @@
+{"type":"session.created","location":{"directory":"/home/example/src/project"},"data":{"sessionID":"ses_df9f31312ffeng2cwesg7i8CZb","location":{"directory":"/home/example/src/project"},"title":"run fixture"}}
+{"type":"session.execution.started","data":{"sessionID":"ses_df9f31312ffeng2cwesg7i8CZb"}}
+{"type":"session.execution.succeeded","data":{"sessionID":"ses_df9f31312ffeng2cwesg7i8CZb"}}
+{"type":"session.viewed","data":{"sessionID":"ses_df9f31312ffeng2cwesg7i8CZb","idle":1795397841822}}
+{"type":"session.deleted","data":{"sessionID":"ses_df9f31312ffeng2cwesg7i8CZb"}}
