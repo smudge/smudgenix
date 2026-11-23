@@ -567,9 +567,10 @@ probe_agent_env() {
 }
 
 # What an agent's command can reach of what it shouldn't (see ../nixos/ai.nix:
-# server.runtimeDir and readOnly), by name: the desktop's sockets (found
-# without the variables), the user manager's, X11's; changing what runs at
-# login; gaining privileges.
+# server.runtimeDir and readOnly, and sandbox), by name: the desktop's sockets
+# (found without the variables), the user manager's, X11's; changing what runs
+# at login, or the rest of your home; gaining privileges; OpenCode's password,
+# or its server's process; `systemd-run --user`, over the bus.
 probe_reach() {
   local messages
   # shellcheck disable=SC2016
@@ -585,6 +586,10 @@ probe_reach() {
       t="$HOME/$d/.smx-ai-probe"; if touch "$t" 2>/dev/null; then rm -f "$t"; echo "re""ach:write:$d"; fi
     done
     grep -q "^NoNewPrivs:[[:space:]]*0" /proc/self/status && echo re""ach:new-privileges
+    [ -r "${XDG_STATE_HOME:-$HOME/.local/state}/opencode/service.json" ] && echo re""ach:opencode-password
+    [ -e /proc/'"$main"' ] && echo re""ach:server-process
+    t="$HOME/.smx-ai-probe"; if touch "$t" 2>/dev/null; then rm -f "$t"; echo re""ach:write:home; fi
+    systemd-run --user --quiet --collect --wait true >/dev/null 2>&1 && echo re""ach:systemd-run
     echo pro""be:done') || return 1
   { grep -oE 'reach:[a-z0-9:./-]+' <<<"$messages" || true; } | sed 's/^reach://' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
@@ -649,16 +654,28 @@ doctor() {
   done
   # (Or, on a server from before it had any, smudgenix's defaults.)
   [ "${#read_only[@]}" -gt 0 ] || read_only=(.config/systemd .config/autostart .config/environment.d)
+  # (Sandboxed, by smudgenix's OpenCode plugin, unless smudgenix.ai.sandbox is
+  # off: then only the rest's checked.)
+  config=$(ctl show "$unit" -p Environment --value | tr ' ' '\n' | sed -n 's/^OPENCODE_CONFIG=//p')
+  sandboxed=$(jq -r '[.plugins[]?.options.sandbox // empty] | first // empty' "$config" 2>/dev/null || true)
+  what="Agents' commands are sandboxed: no desktop, nothing outside the project to change, no OpenCode password, server or systemd-run"
+  [ -n "$sandboxed" ] || what="Agents' commands can't reach the desktop, or change what runs at login"
   if [ "$used" != "$main" ]; then
-    skip "Agents' commands can't reach the desktop, or change what runs at login (not checked: opencode uses another server)"
+    skip "$what (not checked: opencode uses another server)"
   elif ! reached=$(probe_reach); then
-    bad "Agents' commands can't reach the desktop, or change what runs at login" "Couldn't run a command in a test session."
-  elif [ -z "$reached" ]; then
-    ok "Agents' commands can't reach the desktop, or change what runs at login ${D}(but the bus reaches systemd-run --user)${N}"
+    bad "$what" "Couldn't run a command in a test session."
   else
-    bad "Agents' commands can't reach the desktop, or change what runs at login" \
-      "They can reach: $reached." \
-      "After updating the OS, \`opencode service restart\` (which disconnects its sessions)."
+    if [ -z "$sandboxed" ]; then
+      reached=$(tr ' ' '\n' <<<"$reached" | grep -vxE 'opencode-password|server-process|write:home|systemd-run' | tr '\n' ' ' | sed 's/ $//' || true)
+    fi
+    if [ -z "$reached" ]; then
+      ok "$what"
+      [ -n "$sandboxed" ] || skip "Agents' commands aren't sandboxed (smudgenix.ai.sandbox.enable is off): they share the server's files"
+    else
+      bad "$what" \
+        "They can reach: $reached." \
+        "After updating the OS, \`opencode service restart\` (which disconnects its sessions)."
+    fi
   fi
 
   [ -z "$failed" ]
