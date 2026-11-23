@@ -1,11 +1,22 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.1.0"
-plugin_api  = 3
+version     = "0.2.0"
+plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
 description = "Agents, as part of the desktop (via smx ai)."
 
+[[service]]
+id    = "watch"
+entry = "service.luau"
+
 [[widget]]
 id    = "agents"
 entry = "widget.luau"
+
+[[panel]]
+id         = "sessions"
+entry      = "panel.luau"
+width      = 420
+height     = "content"
+max_height = 520
