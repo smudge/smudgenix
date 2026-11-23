@@ -16,6 +16,7 @@ local spinning = false
 local reviewing = nil -- the task whose review is open, by id
 local fileSelected = 1
 local reviewFiles = {} -- the open review's rows' files, in order
+local problem = nil -- the last `smx ai` failure, shown until the next key
 
 local marks = {
   ["needs-permission"] = { glyph = "alert-triangle", color = "tertiary", says = "needs permission" },
@@ -189,11 +190,14 @@ local function quote(s)
   return "'" .. (tostring(s):gsub("'", "'\\''")) .. "'"
 end
 
--- Runs `smx ai …`, saying so if it fails (e.g. accepting a stale review).
+-- Runs `smx ai …`, saying so if it fails (e.g. accepting a stale review): at
+-- the top of the overlay, until the next key (a toast goes too fast).
 local function run(argv)
   noctalia.runAsync(argv, function(result)
     if result.exitCode ~= 0 then
-      noctalia.notifyError("smx ai " .. argv[3], ((result.stderr or ""):gsub("^smx ai: ", "")))
+      local said = ((result.stderr or ""):gsub("\27%[[%d;]*m", ""):gsub("^smx ai: ", ""):gsub("%s+$", ""))
+      problem = `smx ai {argv[3]} failed: {said ~= "" and said or ("exit " .. tostring(result.exitCode))}`
+      render()
     end
   end)
 end
@@ -316,6 +320,7 @@ local function renderReview(task)
       ui.label({ text = task.title or "(untitled)", fontSize = 15, fontWeight = "bold", maxLines = 1, flexGrow = 1 }),
     }),
     ui.label({ text = table.concat(summary, "  ·  "), fontSize = 11, color = "on_surface/0.6" }),
+    problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "file-" .. fileSelected }, rows),
     ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  r tell it what to change  ·  d defer  ·  ← back",
       fontSize = 11, color = "on_surface/0.5" }),
@@ -418,6 +423,7 @@ function render()
 
   panel.render(ui.column({ padding = 14, gap = 6 }, {
     ui.label({ text = "Agents", fontSize = 15, fontWeight = "bold" }),
+    problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "row-" .. selected }, rows),
     ui.label({ text = hints(shown[selected]), fontSize = 11, color = "on_surface/0.5" }),
   }))
@@ -460,6 +466,7 @@ end
 
 function onKey(chord, pressed)
   if not (pressed == true or pressed == "true") then return end
+  problem = nil
   -- (In a review.)
   if reviewing then
     local task = nil
