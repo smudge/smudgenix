@@ -102,13 +102,14 @@ where), to allow or deny; or `smx ai allow|deny <request>`. `--always` allows th
 now on (OpenCode keeps these); `smx ai allowed` lists them, and
 `smx ai allowed revoke <id>` takes one back.
 
-An agent finishing isn't its work being done: you review it. `smx ai review
-<session>` (or `p` on it in Mod+A) makes its work a task in review: the
+An agent finishing isn't its work being done: you review it. When a session
+finishes having changed its repository, its work goes to review by itself
+(`smx ai review <session>`, or `p` on it in Mod+A, does it any time): the
 change, frozen as a commit of the working tree (untracked files too; your
-branch and files untouched), from where it started; the places worth a
-closer look (dependencies, deleted or skipped tests, migrations, CI,
-security-sensitive files and lines, large changes); and what the agent says
-it did, marked as its claim. `smx ai diff <task>` shows it; `accept`,
+branch and files untouched), from where it started (or its last accepted
+review ended); the places worth a closer look (dependencies, deleted or
+skipped tests, migrations, CI, security-sensitive files and lines, large
+changes); and what the agent says it did, marked as its claim. `smx ai diff <task>` shows it; `accept`,
 `revise <task> "<what to change>"` (back to its session) or `defer` decide.
 A review that's changed since it was frozen is stale, and can't be accepted
 until you review it again. Tasks live in `~/.local/share/smudgenix/tasks`,

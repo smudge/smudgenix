@@ -1,8 +1,9 @@
 --!nonstrict
--- The agents overlay (Mod+A, or the bar widget): tasks in review (smx ai
--- review), what agents are doing now (or have open in a TUI), and recent
--- sessions to return to (from the service), with subagents under the
--- sessions that started them. ↑/↓ (or k/j) choose,
+-- The agents overlay (Mod+A, or the bar widget): work to review (smx ai
+-- review, which watch does when a session finishes; Enter opens one: its
+-- files, flagged first, each to its diff), what agents are doing now (or
+-- have open in a TUI), and recent sessions to return to (from the service),
+-- with subagents under the sessions that started them. ↑/↓ (or k/j) choose,
 -- →/← (or l/h) open and close a session's subagents, Enter or a click shows
 -- one (smx ai open).
 
@@ -12,6 +13,9 @@ local shown = {} -- the rows, in order: { session, depth, parent (a row index) }
 local expanded = {} -- by id: true, false, or nil (open if a subagent's at work)
 local spin = 0 -- the loaders' angle
 local spinning = false
+local reviewing = nil -- the task whose review is open, by id
+local fileSelected = 1
+local reviewFiles = {} -- the open review's rows' files, in order
 
 local marks = {
   ["needs-permission"] = { glyph = "alert-triangle", color = "tertiary", says = "needs permission" },
@@ -201,8 +205,8 @@ local function inspect(task, path)
   noctalia.runInTerminal(command)
 end
 
--- A task in review: what to look at, and (selected) what it says it did and
--- each place to look (a click shows it).
+-- A task in review, in the list: how much there is to look at (and,
+-- selected, what it says it did). Enter or a click opens its review.
 local function taskRow(entry, index)
   local task = entry.task
   local review = task.review or {}
@@ -222,23 +226,15 @@ local function taskRow(entry, index)
     ui.row({ gap = 8, align = "center" }, top),
     ui.label({ text = table.concat(details, "  ·  "), fontSize = 11, color = stale and "tertiary" or "on_surface/0.6", maxLines = 1 }),
   }
-  if isSelected then
-    if review.outcome and review.outcome.text then
-      table.insert(lines, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.75", maxLines = 3 }))
-    end
-    for _, spot in spots do
-      table.insert(lines, ui.row({ gap = 6, align = "center", onClick = function() inspect(task, spot.path) end }, {
-        ui.glyph({ name = "alert-triangle", size = 12, color = "tertiary" }),
-        ui.label({ text = spot.path .. (spot.hunk and ("  " .. spot.hunk) or "") .. ": " .. spot.why, fontSize = 11, maxLines = 1 }),
-      }))
-    end
+  if isSelected and review.outcome and review.outcome.text then
+    table.insert(lines, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.75", maxLines = 2 }))
   end
 
   return ui.row({
     key = "row-" .. index,
     gap = 8, padding = 8, radius = 8, align = "center",
     fill = isSelected and "primary/0.15" or nil,
-    onClick = function() inspect(task) end,
+    onClick = function() reviewing = task.id; fileSelected = 1; render() end,
   }, {
     ui.box({ width = 14, height = 14 }),
     ui.glyph({ name = "git-pull-request", size = 18, color = stale and "tertiary" or "secondary" }),
@@ -246,11 +242,90 @@ local function taskRow(entry, index)
   })
 end
 
+-- One task's review (opened from its row): a summary, what it says it did
+-- (one line), and its files, flagged ones first, each to open.
+local function flags(task)
+  local byPath = {}
+  for _, spot in (task.review and task.review.hotspots) or {} do
+    byPath[spot.path] = byPath[spot.path] or {}
+    local whys = byPath[spot.path]
+    local seen = false
+    for _, why in whys do
+      if why == spot.why then seen = true end
+    end
+    if not seen then table.insert(whys, spot.why) end
+  end
+  return byPath
+end
+
+local function renderReview(task)
+  local review = task.review or {}
+  local byPath = flags(task)
+  reviewFiles = {}
+  local flagged, rest = {}, {}
+  for _, file in review.files or {} do
+    table.insert(byPath[file.path] and flagged or rest, file)
+  end
+  for _, file in flagged do table.insert(reviewFiles, file) end
+  for _, file in rest do table.insert(reviewFiles, file) end
+  fileSelected = math.clamp(fileSelected, 1, math.max(1, #reviewFiles))
+
+  local added, removed = 0, 0
+  for _, file in reviewFiles do
+    added += file.added or 0
+    removed += file.removed or 0
+  end
+  local summary = { `{#reviewFiles} file{#reviewFiles == 1 and "" or "s"}, +{added} −{removed}`,
+    #flagged == 0 and "nothing flagged" or `{#flagged} flagged` }
+  if (review.round or 1) > 1 then table.insert(summary, `round {review.round}`) end
+  if task.project then table.insert(summary, task.project) end
+
+  local rows = {}
+  if task.stale then
+    table.insert(rows, ui.label({ text = "Stale: it's changed since this was frozen. p reviews it again.", fontSize = 12, color = "tertiary" }))
+  end
+  if review.outcome and review.outcome.text then
+    table.insert(rows, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }))
+  end
+  for index, file in reviewFiles do
+    local whys = byPath[file.path]
+    local lines = {
+      ui.row({ gap = 8, align = "center" }, {
+        ui.label({ text = file.status or "M", fontSize = 11, color = "on_surface/0.5" }),
+        ui.label({ text = file.path, maxLines = 1, flexGrow = 1 }),
+        ui.label({ text = `+{file.added or 0} −{file.removed or 0}`, fontSize = 11, color = "on_surface/0.5" }),
+      }),
+    }
+    for _, why in whys or {} do
+      table.insert(lines, ui.label({ text = why, fontSize = 11, color = "tertiary", maxLines = 1 }))
+    end
+    table.insert(rows, ui.row({
+      key = "file-" .. index,
+      gap = 8, padding = 6, radius = 6, align = "center",
+      fill = index == fileSelected and "primary/0.15" or nil,
+      onClick = function() inspect(task, file.path) end,
+    }, {
+      ui.glyph({ name = whys and "alert-triangle" or "file", size = 14, color = whys and "tertiary" or "on_surface/0.5" }),
+      ui.column({ gap = 2, flexGrow = 1 }, lines),
+    }))
+  end
+
+  panel.render(ui.column({ padding = 14, gap = 6 }, {
+    ui.row({ gap = 8, align = "center" }, {
+      ui.row({ onClick = function() reviewing = nil; render() end }, { ui.glyph({ name = "chevron-left", size = 16, color = "on_surface/0.6" }) }),
+      ui.label({ text = task.title or "(untitled)", fontSize = 15, fontWeight = "bold", maxLines = 1, flexGrow = 1 }),
+    }),
+    ui.label({ text = table.concat(summary, "  ·  "), fontSize = 11, color = "on_surface/0.6" }),
+    ui.scroll({ flexGrow = 1, gap = 2, revealKey = "file-" .. fileSelected }, rows),
+    ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  r tell it what to change  ·  d defer  ·  ← back",
+      fontSize = 11, color = "on_surface/0.5" }),
+  }))
+end
+
 -- What the keys do, on this row.
 local function hints(entry)
   if entry and entry.task then
-    return entry.task.stale and "p review again  ·  Enter diff  ·  r tell it  ·  d defer  ·  Esc close"
-      or "a accept  ·  Enter diff  ·  r tell it what to change  ·  d defer  ·  Esc close"
+    return "Enter review  ·  " .. (entry.task.stale and "p review again" or "a accept") .. "  ·  r tell it what to change  ·  d defer  ·  Esc close"
   elseif asks(entry) then
     return "a allow  ·  Shift+A always  ·  d deny  ·  ↑↓ choose  ·  Enter open  ·  Esc close"
   end
@@ -264,12 +339,26 @@ end
 function render()
   if not open then return end
   local agents = noctalia.state.get("agents") or { server = "stopped", sessions = {} }
+  if reviewing then
+    for _, task in agents.tasks or {} do
+      if task.id == reviewing then
+        renderReview(task)
+        return
+      end
+    end
+    reviewing = nil -- (gone: accepted elsewhere, say)
+  end
   local roots, children = trees(agents.sessions or {})
 
   -- Now: what's at work, needs you, finished unseen, or open in a TUI.
+  local inReview = {}
+  for _, task in agents.tasks or {} do
+    if task.state == "in-review" then inReview[task.session] = true end
+  end
   local now, recent = {}, {}
   for _, root in roots do
-    local isNow = root.open or root.unseen or busy(root) or anyBusy(root.id, children, busy)
+    local isBusy = busy(root) or anyBusy(root.id, children, busy)
+    local isNow = isBusy or ((root.open or root.unseen) and not inReview[root.id])
     table.insert(isNow and now or recent, root)
   end
   -- (What needs you first.)
@@ -288,7 +377,7 @@ function render()
     if task.state == "in-review" or task.state == "revising" then table.insert(reviewing, task) end
   end
   if #reviewing > 0 then
-    table.insert(rows, heading("Review"))
+    table.insert(rows, heading("To review"))
     for _, task in reviewing do
       table.insert(shown, { task = task, depth = 0 })
       table.insert(rows, taskRow(shown[#shown], #shown))
@@ -351,6 +440,7 @@ end
 function onOpen(context)
   open = true
   selected = 1
+  reviewing = nil
   render()
   if type(context) == "string" and context ~= "" then
     for index, entry in shown do
@@ -370,9 +460,44 @@ end
 
 function onKey(chord, pressed)
   if not (pressed == true or pressed == "true") then return end
+  -- (In a review.)
+  if reviewing then
+    local task = nil
+    for _, t in (noctalia.state.get("agents") or {}).tasks or {} do
+      if t.id == reviewing then task = t end
+    end
+    if not task then reviewing = nil; render(); return end
+    if chord == "Down" or chord == "j" then
+      fileSelected = math.min(fileSelected + 1, math.max(1, #reviewFiles))
+    elseif chord == "Up" or chord == "k" then
+      fileSelected = math.max(fileSelected - 1, 1)
+    elseif chord == "Left" or chord == "h" then
+      reviewing = nil
+    elseif chord == "Return" then
+      if reviewFiles[fileSelected] then inspect(task, reviewFiles[fileSelected].path) end
+      return
+    elseif chord == "a" or chord == "d" then
+      run({ "smx", "ai", chord == "a" and "accept" or "defer", task.id })
+      reviewing = nil
+    elseif chord == "r" then
+      noctalia.runAsync({ "smx", "ai", "open", task.session }) -- (to say what to change)
+      panel.close()
+      return
+    elseif chord == "p" then
+      run({ "smx", "ai", "review", task.session })
+    end
+    render()
+    return
+  end
   local entry = shown[selected]
   local task = entry and entry.task
-  if task and (chord == "a" or chord == "d" or chord == "r" or chord == "p" or chord == "Return") then
+  if task and (chord == "Right" or chord == "l" or chord == "Return") then
+    reviewing = task.id
+    fileSelected = 1
+    render()
+    return
+  end
+  if task and (chord == "a" or chord == "d" or chord == "r" or chord == "p") then
     if chord == "a" then
       run({ "smx", "ai", "accept", task.id })
     elseif chord == "d" then
@@ -380,10 +505,8 @@ function onKey(chord, pressed)
     elseif chord == "r" then
       noctalia.runAsync({ "smx", "ai", "open", task.session }) -- (to say what to change)
       panel.close()
-    elseif chord == "p" then
-      run({ "smx", "ai", "review", task.session }) -- (again: a new round)
     else
-      inspect(task)
+      run({ "smx", "ai", "review", task.session }) -- (again: a new round)
     end
     return
   end
