@@ -259,10 +259,20 @@ function onFrameTick(deltaMs)
   render()
 end
 
-function onOpen()
+-- (From a notification: on its session, given as the context.)
+function onOpen(context)
   open = true
   selected = 1
   render()
+  if type(context) == "string" and context ~= "" then
+    for index, entry in shown do
+      if entry.session.id == context then
+        selected = index
+        render()
+        break
+      end
+    end
+  end
 end
 
 function onClose()

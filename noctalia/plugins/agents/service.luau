@@ -53,8 +53,21 @@ local function title(session)
   return session.title or "An agent"
 end
 
+-- A notification that opens its session (Open, or a click on it).
 local function notify(say, summary, body, id)
-  say(summary, body, { actions = { { id = "open", label = "Open" } }, onAction = "onNotificationAction", context = id })
+  say(summary, body, {
+    actions = { { id = "default" }, { id = "open", label = "Open" } },
+    onAction = "onNotificationAction", context = "open:" .. id,
+  })
+end
+
+-- One that opens the overlay (Mod+A), on its session if it has one (Review,
+-- or a click on it): where you answer it, or can if you miss it.
+local function review(say, summary, body, id)
+  say(summary, body, {
+    actions = { { id = "default" }, { id = "review", label = "Review" } },
+    onAction = "onNotificationAction", context = "review:" .. (id or ""),
+  })
 end
 
 -- Finished sessions, told together a moment after the first (so several
@@ -85,8 +98,7 @@ local function tellFinished()
     for _, session in still do
       table.insert(titles, (session.state == "failed" and "✗ " or "✓ ") .. title(session))
     end
-    say(`{#still} agents finished` .. (failed > 0 and ` ({failed} failed)` or ""), table.concat(titles, "\n"),
-      { actions = { { id = "show", label = "Show" } }, onAction = "onNotificationAction" })
+    review(say, `{#still} agents finished` .. (failed > 0 and ` ({failed} failed)` or ""), table.concat(titles, "\n"))
   end
 end
 
@@ -103,9 +115,9 @@ end
 
 -- What changed for you, if anything, from before to after: unless you're
 -- looking at it, or said not to (the plugin's notify setting). Each new
--- request gets Deny and Show, never Allow (so one appearing as you type
--- can't be allowed by accident: that's the overlay's). (A subagent's
--- finishing is its parent's news, not yours.)
+-- request gets one, which only opens the overlay, where you answer it (so
+-- one appearing as you type can't answer anything). (A subagent's finishing
+-- is its parent's news, not yours.)
 local function tell(before, after)
   if lookingAt(after) or noctalia.getConfig("notify") == false then return end
   local asked = {}
@@ -114,10 +126,7 @@ local function tell(before, after)
   end
   for _, request in after.permissions or {} do
     if not asked[request.id] then
-      noctalia.notify("Needs permission: " .. title(after), described(request), {
-        actions = { { id = "deny", label = "Deny" }, { id = "show", label = "Show" } },
-        onAction = "onNotificationAction", context = request.id,
-      })
+      review(noctalia.notify, "Needs permission: " .. title(after), described(request), after.id)
     end
   end
   local was = before and before.state
@@ -131,14 +140,16 @@ local function tell(before, after)
   end
 end
 
--- (Open: a session's id; Deny: a request's.)
-function onNotificationAction(action, id)
-  if action == "show" then
-    noctalia.togglePanel("smudgenix/agents:sessions")
-  elseif action == "deny" and id then
-    noctalia.runAsync({ "smx", "ai", "deny", id })
-  elseif id then
+-- (The context: "open:<session>" or "review:<session, or none>".)
+function onNotificationAction(_action, context)
+  local how, id = tostring(context or ""):match("^(%a+):(.*)$")
+  if how == "open" and id ~= "" then
     noctalia.runAsync({ "smx", "ai", "open", id })
+  elseif how == "review" then
+    -- (Open, not toggle: never closing it if it's open already.)
+    local open = { "noctalia", "msg", "panel-open", "smudgenix/agents:sessions" }
+    if id ~= "" then table.insert(open, id) end
+    noctalia.runAsync(open)
   end
 end
 
