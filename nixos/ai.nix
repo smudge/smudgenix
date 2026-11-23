@@ -108,10 +108,11 @@ in
       enable = lib.mkEnableOption "a sandbox for each of agents' shell commands (see ../ai/sandbox.sh)" // { default = true; };
       writable = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [ ".cache" ".cargo" ".rustup" ".npm" ".local/share/pnpm" "go" ];
+        default = [ ".cache" ".cargo" ".rustup" ".npm" ".local/share/pnpm" "go" ".opencode/plan" ];
         description = ''
           What in your home (besides the project) agents' commands can
-          change: by default, tools' caches.
+          change: by default, tools' caches, and OpenCode's plans (where its
+          plan mode writes them).
         '';
       };
       hidden = lib.mkOption {
