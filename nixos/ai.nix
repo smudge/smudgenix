@@ -10,6 +10,15 @@ let
   unwrapped = lib.getExe opencode.unwrapped;
   stateFile = ''"''${XDG_STATE_HOME:-$HOME/.local/state}/opencode/service.json"'';
 
+  # Over each user's own config. (A session's shell commands get its client's
+  # environment, not the server's, so the plugin unsets the same there.)
+  opencodeConfig = pkgs.writeText "opencode.json" (builtins.toJSON {
+    plugins = [{
+      package = "${../ai/opencode-plugin}";
+      options = { inherit (cfg.server) unsetEnvironment; };
+    }];
+  });
+
   # (opencode won't share its port, and otherwise reports a clash only once
   # it's "started".)
   checkFree = pkgs.writeShellScript "opencode-check-free" ''
@@ -37,8 +46,8 @@ in
       default = [ "NIRI_SOCKET" "WAYLAND_DISPLAY" "WAYLAND_SOCKET" "DISPLAY" ];
       example = [ "NIRI_SOCKET" "WAYLAND_DISPLAY" "WAYLAND_SOCKET" "DISPLAY" "DBUS_SESSION_BUS_ADDRESS" "SSH_AUTH_SOCK" ];
       description = ''
-        Environment variables OpenCode's server (and so every agent) runs
-        without. By default, the desktop's (niri, and Wayland and X11
+        Environment variables OpenCode's server, and every agent's shell
+        command (whatever its client's environment), run without. By default, the desktop's (niri, and Wayland and X11
         windows). The session bus (which reaches the unlocked keyring, and
         so `gh`'s and git's credentials) and the SSH agent stay.
       '';
@@ -53,6 +62,7 @@ in
       unitConfig.ConditionUser = "!@system";
       # The session's PATH (the user's tools, for agents), not a unit's.
       environment.PATH = lib.mkForce null;
+      environment.OPENCODE_CONFIG = "${opencodeConfig}";
       serviceConfig = {
         Type = "exec";
         ExecStartPre = checkFree;

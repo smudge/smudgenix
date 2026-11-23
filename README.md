@@ -66,9 +66,9 @@ Updates are driven by what is pushed upstream:
 ## Agents
 
 OpenCode's server runs as each user's `opencode` service, which `opencode`
-starts (and uses) on demand, so agents never run with a terminal's access to
-the desktop: they can't drive niri, or read or type into windows
-(`smudgenix.ai.server.unsetEnvironment`). They keep the session bus (and so
+starts (and uses) on demand, and agents' commands run without the desktop's
+environment, even the one a client passes on: they can't drive niri, or read
+or type into windows (`smudgenix.ai.server.unsetEnvironment`). They keep the session bus (and so
 the keyring's `gh` and git credentials) and the SSH agent.
 `opencode service start|stop|restart` goes through the service.
 
