@@ -13,6 +13,14 @@ let
 
   theme = import ../../theme pkgs;
 
+  # smudgenix's own plugins (../../noctalia/plugins), checked the way Noctalia
+  # loads them. (A home can use a checkout's instead, as you edit them: see
+  # ../../nix/modules/noctalia.nix.)
+  plugins = pkgs.runCommand "smudgenix-noctalia-plugins" { } ''
+    cp -r ${../../noctalia/plugins} $out
+    HOME=$TMPDIR ${lib.getExe noctalia} plugins lint $out
+  '';
+
   msg = args: { action = "spawn ${lib.concatMapStringsSep " " builtins.toJSON ([ "noctalia" "msg" ] ++ args)}"; };
 
   # The smudge theme as a Noctalia palette (dark only).
@@ -94,6 +102,16 @@ let
     weather.enabled = false;
     desktop_widgets.enabled = false;
 
+    # Noctalia's plugin sources, and smudgenix's (read-only, from the store).
+    plugins = {
+      source = [
+        { name = "official"; kind = "git"; location = "https://github.com/noctalia-dev/official-plugins"; enabled = true; }
+        { name = "community"; kind = "git"; location = "https://github.com/noctalia-dev/community-plugins"; enabled = true; }
+        { name = "smudgenix"; kind = "path"; location = "${plugins}"; enabled = true; }
+      ];
+      enabled = [ "smudgenix/agents" ];
+    };
+
     # A dock, out of the way until it's needed.
     dock = {
       enabled = true;
@@ -125,7 +143,7 @@ let
       reserve_space = false;
       start = [ "launcher" "workspaces" "clipboard" "media" ];
       center = [ "clock" "control-center" ];
-      end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
+      end = [ "tray" "agents" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
     };
 
     # Icons only, and a short date & time.
@@ -135,6 +153,7 @@ let
       brightness.show_label = false;
       network.show_label = false;
       volume.show_label = false;
+      agents.type = "smudgenix/agents:agents";
     };
   };
 

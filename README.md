@@ -123,4 +123,6 @@ shows all of it. After applying, it lists the packages that changed.
 Updates use your `gh` login, if any, to avoid GitHub rate limits.
 
 For local iteration, `config apply --local <checkout>` uses a smudgenix
-checkout instead of the locked one.
+checkout instead of the locked one. To work on smudgenix's Noctalia plugins
+(`noctalia/plugins/`), `smx config set desktop.noctalia.pluginsFrom
+<checkout>` uses the checkout's, and Noctalia reloads them as you edit them.

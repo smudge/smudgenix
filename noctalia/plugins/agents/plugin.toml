@@ -1,0 +1,11 @@
+id          = "smudgenix/agents"
+name        = "Agents"
+version     = "0.1.0"
+plugin_api  = 3
+author      = "smudgenix"
+icon        = "robot"
+description = "Agents, as part of the desktop (via smx ai)."
+
+[[widget]]
+id    = "agents"
+entry = "widget.luau"
