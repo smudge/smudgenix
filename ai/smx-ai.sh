@@ -189,6 +189,10 @@ connected_events() {
         esac
       fi
       printf '%s\n' "$line"
+      # (A session's finished: its work, if it changed anything, to review.)
+      if [ "$type" = session.execution.succeeded ]; then
+        review "$id" --auto >/dev/null 2>&1 &
+      fi
     done
   }
 }
@@ -248,11 +252,11 @@ tui_changes() {
 }
 
 # watch's tasks, while it runs: whenever they change (or a review goes
-# stale), and at first; without their files, for brevity.
+# stale), and at first (with up to 200 of each one's files).
 task_changes() {
   local now last="" watcher=$$
   while [ -e "/proc/$watcher" ]; do
-    now=$(task_command --json 2>/dev/null | jq -c '{type: "smx.tasks", tasks: [.tasks[] | .review |= (if . then del(.files) + {files: (.files | length)} else . end)]}') || now=""
+    now=$(task_command --json 2>/dev/null | jq -c '{type: "smx.tasks", tasks: [.tasks[] | .review |= (if . then .files |= .[:200] else . end)]}') || now=""
     [ -z "$now" ] || [ "$now" = "$last" ] || { echo "$now"; last=$now; }
     sleep 5
   done
@@ -545,41 +549,61 @@ latest_reply() {
 # review: makes a session's work a task in review (or, if it is one, a new
 # round of it): what changed, frozen; where to look; what it says it did.
 review() {
-  local session="" since="" json="" sess dir repo title created id task round
-  local base candidate tree change hotspots reply project
+  local session="" since="" json="" auto="" sess dir repo title created id task round
+  local base candidate tree change hotspots reply project accepted
+  local usage="usage: smx ai review <session> [--since <commit>] [--json]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --since) since=${2:-}; shift ;;
       --json) json=1 ;;
-      -*) die "usage: smx ai review <session> [--since <commit>] [--json]" ;;
+      --auto) auto=1 ;;
+      -*) die "$usage" ;;
       *) session=$1 ;;
     esac
     shift
   done
-  [ -n "$session" ] || die "usage: smx ai review <session> [--since <commit>] [--json]"
+  [ -n "$session" ] || die "$usage"
   [ -n "$(server_url)" ] || die "OpenCode's server isn't running" 3
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
+  # (--auto, as watch does when a session finishes: only top-level ones',
+  # only in a repository, and only if there's something new; quietly.)
+  if [ -n "$auto" ] && [ -n "$(jq -r '.parentID // empty' <<<"$sess")" ]; then return; fi
   dir=$(jq -r '.location.directory // empty' <<<"$sess")
   title=$(jq -r '.title // "(untitled)"' <<<"$sess")
   created=$(jq -r '.time.created // 0' <<<"$sess")
-  repo=$(git -C "${dir:-/}" rev-parse --show-toplevel 2>/dev/null) || die "${dir:-its folder} isn't in a git repository: nothing to review"
+  if ! repo=$(git -C "${dir:-/}" rev-parse --show-toplevel 2>/dev/null); then
+    [ -z "$auto" ] || return 0
+    die "${dir:-its folder} isn't in a git repository: nothing to review"
+  fi
 
-  # (A session's open task gets a new round.)
-  task=""
+  # (One at a time: watch may be doing this too.)
+  mkdir -p "$tasks_dir"
+  exec 9>"$tasks_dir/.lock"
+  flock 9
+
+  # A session's open task gets a new round, from the same base; else a new
+  # task, from where its last accepted one ended (so only new work).
+  task="" accepted=""
   for file in "$tasks_dir"/*/task.json; do
     [ -f "$file" ] || continue
     if jq -e --arg s "$session" '.session == $s and .state != "accepted"' "$file" >/dev/null; then
       task=$(cat "$file")
-      break
+    elif jq -e --arg s "$session" '.session == $s' "$file" >/dev/null; then
+      accepted=$(jq -c --argjson a "${accepted:-null}" 'if $a == null or .updated > $a.updated then . else $a end' "$file")
     fi
   done
   if [ -n "$task" ]; then
     id=$(jq -r .id <<<"$task")
     round=$(($(jq '.rounds | length' <<<"$task") + 1))
+    [ -n "$since" ] || since=$(jq -r '.rounds[0].base // empty' <<<"$task")
+    if [ -n "$auto" ] && [ "$(worktree_tree "$repo")" = "$(jq -r '.rounds | last | .tree // empty' <<<"$task")" ]; then
+      return
+    fi
   else
     id="tsk_$(date +%Y%m%d%H%M%S)_$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
     round=1
+    [ -n "$since" ] || [ -z "$accepted" ] || since=$(jq -r '.rounds | last | .candidate' <<<"$accepted")
     project=$(basename "$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir | sed 's#/\.git$##')")
     task=$(jq -cn --arg id "$id" --arg t "$title" --arg p "$project" --arg r "$repo" --arg s "$session" --argjson now "$(now_ms)" \
       '{v: 1, id: $id, title: $t, project: $p, dir: $r, session: $s, state: "in-review", created: $now, updated: $now, rounds: []}')
@@ -590,7 +614,7 @@ review() {
   tree=$(git -C "$repo" rev-parse "$candidate^{tree}")
   if [ "$(git -C "$repo" rev-parse "$base^{tree}" 2>/dev/null || echo "$base")" = "$tree" ]; then
     git -C "$repo" update-ref -d "refs/smudgenix/tasks/$id/$round"
-    echo "${D}Nothing to review: no changes since ${base:0:12}.${N}"
+    [ -n "$auto" ] || echo "${D}Nothing to review: no changes since ${base:0:12}.${N}"
     return
   fi
   change=$(change_json "$repo" "$base" "$candidate")
@@ -603,6 +627,7 @@ review() {
          outcome: (if $reply then {text: $reply, by: "agent"} else null end),
          files: $change.files, hotspots: $hotspots}]' <<<"$task")
   save_task "$task"
+  [ -z "$auto" ] || return 0
   if [ -n "$json" ]; then task_view "$id"; else show_task "$id"; fi
 }
 
