@@ -162,7 +162,7 @@ probe_agent_env() {
   done
   api DELETE "/api/session/$sid" >/dev/null 2>&1 || true
   grep -q 'probe:done' <<<"$messages" || return 1
-  grep -oE 'leak:[A-Z_]+' <<<"$messages" | sed 's/^leak://' | sort -u | tr '\n' ' ' | sed 's/ $//'
+  { grep -oE 'leak:[A-Z_]+' <<<"$messages" || true; } | sed 's/^leak://' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 doctor() {
