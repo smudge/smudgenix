@@ -1,6 +1,6 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.3.0"
+version     = "0.4.0"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
@@ -15,15 +15,13 @@ id    = "agents"
 entry = "widget.luau"
 
 [[panel]]
-id         = "sessions"
-entry      = "panel.luau"
-width      = 420
-height     = "content"
-max_height = 520
-
-[[launcher_provider]]
-id                       = "search"
-entry                    = "launcher.luau"
-prefix                   = "ai"
-glyph                    = "robot"
-include_in_global_search = true
+id               = "sessions"
+entry            = "panel.luau"
+width            = 560
+height           = "content"
+max_height       = 640
+placement        = "floating"
+position         = "center"
+open_near_click  = false
+keyboard_focus   = "exclusive"
+capture_keys     = [ "Up", "Down", "k", "j", "Return" ]

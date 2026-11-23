@@ -74,6 +74,10 @@ so the keyring's `gh` and git credentials, and the SSH agent.)
 `opencode service start|stop|restart` goes through the service, and
 `smx ai doctor` checks all of it.
 
+On the desktop, the bar shows what agents are doing (and tells you when one
+needs you or finishes), and Mod+A shows them, with recent sessions to return
+to. `smx ai status`, `watch` and `open` do the same from a terminal.
+
 ## smx
 
 `smx`, installed for every user, works on your home, and never needs sudo.

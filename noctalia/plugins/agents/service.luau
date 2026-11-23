@@ -11,7 +11,7 @@ local function publish()
   for _, session in sessions do
     table.insert(list, session)
   end
-  table.sort(list, function(a, b) return a.id > b.id end) -- (newest first)
+  table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
   noctalia.state.set("agents", { server = server, sessions = list })
 end
 
