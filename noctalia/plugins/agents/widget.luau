@@ -1,8 +1,8 @@
 --!nonstrict
 -- The agents' bar widget: what they're doing (from the service), most urgent
--- first, and nothing at all when nothing needs you, there's nothing to
--- review and none is at work (Mod+A still shows them). Click: the overlay;
--- right-click: check on them (smx ai doctor).
+-- first, and greyed out when nothing needs you, there's nothing to review and
+-- none is at work. Click: the overlay (as Mod+A); right-click: check on them
+-- (smx ai doctor).
 
 local function count(list, keep)
   local n = 0
@@ -22,7 +22,6 @@ local function render(agents)
   local review = count(agents.tasks or {}, function(t) return t.state == "in-review" end)
     + count(sessions, function(s) return s.parent == nil and s.unseen end)
 
-  barWidget.setVisible(true)
   if agents.server == "down" then
     barWidget.setGlyph("robot-off")
     barWidget.setGlyphColor("error")
@@ -45,7 +44,11 @@ local function render(agents)
     barWidget.setText("")
     barWidget.setTooltip(`Agents: {working} at work`)
   else
-    barWidget.setVisible(false)
+    -- (Nothing for you: there, but quiet.)
+    barWidget.setGlyph("robot")
+    barWidget.setGlyphColor("on_surface/0.35")
+    barWidget.setText("")
+    barWidget.setTooltip(agents.server == "up" and "Agents: nothing needs you (click to see them)" or "Agents: none (OpenCode's server isn't running; click to see them)")
   end
 end
 
