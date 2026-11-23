@@ -31,6 +31,12 @@ Agents (OpenCode), as part of the desktop.
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
   open <session>          Show a session: its TUI's window, or a new one
+  allow <request> [--always]
+                          Allow what an agent asked to do (--always: and
+                          the like, in its project, from now on)
+  deny <request>          Don't
+  allowed [--json]        What's allowed from now on
+  allowed revoke <id>     Ask again for it
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -90,7 +96,7 @@ shape='def shape:
 # their folder's repository, its main checkout's, or else of the folder), their
 # latest reply and compaction, and what the running ones wait on.
 filled() {
-  local session id dir running project reply compaction
+  local session id dir running project reply compaction requests
   local -A projects=()
   while IFS= read -r session; do
     [ -n "$session" ] || continue
@@ -106,9 +112,10 @@ filled() {
     session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" --argjson c "${compaction:-null}" \
       '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r, about: $c}' <<<"$session")
     if [ "$running" = true ]; then
-      jq -c --argjson p "$(server_get "/api/session/$id/permission" || echo '{"data":[]}')" \
+      requests=$(server_get "/api/session/$id/permission" | jq -c '.data[]' | with_cwd "$dir" | jq -cs .) || requests='[]'
+      jq -c --argjson p "$requests" \
         --argjson f "$(server_get "/api/session/$id/form" || echo '{"data":[]}')" \
-        '. + {permissions: [$p.data[] | {id, action, resources, save: (.save // [])}],
+        '. + {permissions: [$p[] | {id, action, resources, save: (.save // []), cwd}],
               forms: [$f.data[] | {id, title}]}' <<<"$session"
     else
       echo "$session"
@@ -159,6 +166,11 @@ connected_events() {
     known=" $(jq -r '.sessions[].id' <<<"$snap" | tr '\n' ' ') "
     while IFS= read -r line; do
       IFS=$'\t' read -r type id < <(jq -r '[.type, (.data.sessionID // .data.form.sessionID // "-")] | @tsv' <<<"$line")
+      # (Where a request would run, from the call itself.)
+      if [ "$type" = permission.asked ]; then
+        asked=$(jq -c .data <<<"$line" | with_cwd "$(jq -r '.location.directory // ""' <<<"$line")" \
+          | jq -c --argjson e "$line" '$e + {data: .}') && [ -n "$asked" ] && line=$asked
+      fi
       if [ "$id" != - ] && [[ $known != *" $id "* ]]; then
         known+="$id "
         case "$type" in
@@ -295,6 +307,11 @@ status() {
             *) mark="${D}-${N}" ;;
           esac
           printf '%s %-22s %s  %s\n' "$mark" "$state$([ "$flags" = - ] || echo ", $flags")" "$title" "${D}$dir  $id${N}"
+          # (What it asks: smx ai allow|deny <request>.)
+          jq -c --arg id "$id" '.sessions[] | select(.id == $id) | .permissions[]' <<<"$now" \
+            | while IFS= read -r request; do
+                printf '    %s  %s\n' "$(described <<<"$request")" "${D}$(jq -r .id <<<"$request")${N}"
+              done
         done
   fi
   [ "$(jq -r '.state // "up"' <<<"$now")" != down ] || exit 3
@@ -395,6 +412,115 @@ open_session() {
   setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
 }
 
+# --- allow, deny, allowed -----------------------------------------------------
+
+# Permission requests (JSON lines in and out, as the server has them), with
+# where they'd run: the shell call's own workdir (not the agent's description
+# of it), against the session's folder ($1), or else that folder.
+with_cwd() {
+  local request session message call input
+  while IFS= read -r request; do
+    [ -n "$request" ] || continue
+    IFS=$'\t' read -r session message call < <(jq -r '[.sessionID, (.source.messageID // "-"), (.source.id // "-")] | @tsv' <<<"$request")
+    input=$(server_get "/api/session/$session/message/$message" | jq -c --arg call "$call" \
+      'first(.data.content[]? | select(.type == "tool" and .id == $call) | .state.input) // {}' 2>/dev/null) || input=""
+    [ -n "$input" ] || input='{}'
+    jq -c --argjson i "$input" --arg d "$1" \
+      '. + {cwd: ($i.workdir // null | if . == null then $d elif startswith("/") then . else $d + "/" + . end)}' <<<"$request"
+  done
+}
+
+# A request waiting on you (any running session's), by its id.
+pending_request() {
+  local session
+  for session in $(server_get "/api/session?limit=50" | jq -r '.data[] | select((.time.busy // 0) > (.time.idle // 0)) | .id'); do
+    server_get "/api/session/$session/permission" | jq -ce --arg r "$1" 'first(.data[] | select(.id == $r))' && return
+  done
+  return 1
+}
+
+# A request, in a line: what it'd do, and where.
+described() {
+  jq -r --arg home "$HOME" '"\(.action) \(.resources | join(", "))"
+    + (if .cwd then "  (in \(.cwd | if startswith($home) then "~" + .[($home | length):] else . end))" else "" end)'
+}
+
+# allow|deny: answers a request. (Safe to repeat: one that's not waiting is
+# already answered, so there's nothing to do.)
+answer() {
+  local verb=$1 decision=$2 id=${3:-} request session
+  [ -n "$id" ] || die "usage: smx ai $verb <request>"
+  if [ -z "$(server_url)" ] || ! server_get "/api/session?limit=1" >/dev/null; then die "OpenCode's server isn't reachable" 3; fi
+  if ! request=$(pending_request "$id"); then
+    echo "${D}Nothing to do: $id isn't waiting (answered already, or never asked).${N}"
+    return
+  fi
+  session=$(jq -r .sessionID <<<"$request")
+  server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg d "$decision" '{decision: $d}')" \
+    "$(server_url)/api/session/$session/permission/$id/reply" >/dev/null || die "couldn't answer $id"
+  request=$(with_cwd "$(server_get "/api/session/$session" | jq -r '.data.location.directory // ""')" <<<"$request")
+  case "$decision" in
+    once) echo "${G}✓${N} Allowed: $(described <<<"$request")" ;;
+    always) echo "${G}✓${N} Allowed, and from now on: $(jq -r '"\(.action) \((.save // .resources) | join(", "))"' <<<"$request")" ;;
+    reject) echo "${R}✗${N} Denied: $(described <<<"$request")" ;;
+  esac
+}
+
+allow() {
+  local id="" decision=once
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --always) decision=always ;;
+      -*) die "usage: smx ai allow <request> [--always]" ;;
+      *) id=$1 ;;
+    esac
+    shift
+  done
+  answer allow "$decision" "$id"
+}
+
+# allowed: what's allowed from now on (OpenCode's saved permissions: per
+# project, an action and a pattern), and revoking it.
+allowed() {
+  local saved projects project code
+  case "${1:-}" in
+    revoke)
+      [ -n "${2:-}" ] || die "usage: smx ai allowed revoke <id>"
+      # (The server takes a repeat without saying so.)
+      if allowed --json | jq -e --arg id "$2" '.allowed | any(.id == $id)' >/dev/null; then
+        code=$(server_curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X DELETE "$(server_url)/api/permission/saved/$2") || die "OpenCode's server isn't reachable" 3
+      else
+        code=404
+      fi
+      case "$code" in
+        2??) echo "${G}✓${N} Revoked $2" ;;
+        404) echo "${D}Nothing to do: $2 isn't allowed (revoked already, or never was).${N}" ;;
+        *) die "couldn't revoke $2 (HTTP $code)" ;;
+      esac
+      return
+      ;;
+    "" | --json) ;;
+    *) die "usage: smx ai allowed [--json | revoke <id>]" ;;
+  esac
+  # (The server lists them per project.)
+  projects=$(server_get /api/project) || die "OpenCode's server isn't reachable" 3
+  saved=$(for project in $(jq -r '.[].id' <<<"$projects"); do server_get "/api/permission/saved?projectID=$project" | jq -c '.data[]'; done | jq -cs .)
+  saved=$(jq -c --argjson p "$projects" '($p | map({key: .id, value: .canonical}) | from_entries) as $where
+    | {v: 1, allowed: [.[] | {id, project: $where[.projectID], action, resource, created: .time.created}]}' <<<"$saved")
+  if [ "${1:-}" = --json ]; then
+    echo "$saved"
+  elif [ "$(jq '.allowed | length' <<<"$saved")" = 0 ]; then
+    echo "${D}Nothing's allowed from now on: agents ask (as their rules say).${N}"
+  else
+    jq -r --arg home "$HOME" '.allowed[] | [.action, .resource,
+        ((.project // "?") | if startswith($home) then "~" + .[($home | length):] else . end), .id] | @tsv' <<<"$saved" \
+      | while IFS=$'\t' read -r action resource project id; do
+          printf '%s %s  %s\n' "$action" "$resource" "${D}$project  $id${N}"
+        done
+  fi
+}
+
 # --- doctor -----------------------------------------------------------------
 
 failed=""
@@ -492,6 +618,9 @@ case "${1:-}" in
   watch) shift; watch_command "$@" ;;
   status) shift; status "$@" ;;
   open) shift; open_session "$@" ;;
+  allow) shift; allow "$@" ;;
+  deny) shift; [ "$#" -le 1 ] || die "usage: smx ai deny <request>"; answer deny reject "${1:-}" ;;
+  allowed) shift; allowed "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac

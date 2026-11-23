@@ -21,6 +21,11 @@
 # on screen through (its terminal's among them), if any; and project is its
 # repository's name, or null.
 #
+# A permission is {id, action, resources, save, cwd}: what it'd do (e.g.
+# "shell" and the command, or "edit" and the files), the patterns allowing it
+# "always" would save, and where it'd run (its session's folder, unless the
+# call says otherwise); a form is {id, title}.
+#
 # A snapshot has the recent sessions (a few, any running or unseen, and those
 # ones' subagents', whose parent is theirs).
 #
@@ -78,7 +83,8 @@ def apply($e):
   elif $e.type == "session.viewed" then .unseen = false
   # (Asked again if a snapshot already had it.)
   elif $e.type == "permission.asked" then
-    ($e.data | {id, action, resources, save: (.save // [])}) as $p
+    .dir as $dir
+    | ($e.data | {id, action, resources, save: (.save // []), cwd: (.cwd // $dir)}) as $p
     | .permissions |= map(select(.id != $p.id)) + [$p]
   elif $e.type == "permission.replied" then
     .permissions |= map(select(.id != $e.data.requestID))
