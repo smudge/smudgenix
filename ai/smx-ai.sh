@@ -10,13 +10,14 @@ probe_dir="${XDG_STATE_HOME:-$HOME/.local/state}/smudgenix/ai-probe"
 fancy=""
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; then fancy=1; fi
 rgb() { printf '\033[38;2;%d;%d;%dm' "0x${1:1:2}" "0x${1:3:2}" "0x${1:5:2}"; }
-D="" R="" G="" N=""
+A="" D="" R="" G="" Y="" N=""
 if [ -n "$fancy" ]; then
-  D=$(rgb "$color_dim") R=$(rgb "$color_red") G=$(rgb "$color_green") N=$'\033[0m'
+  A=$(rgb "$color_accent") D=$(rgb "$color_dim") R=$(rgb "$color_red")
+  G=$(rgb "$color_green") Y=$(rgb "$color_yellow") N=$'\033[0m'
 fi
 
 say() { echo "${D}smx ai:${N} $*" >&2; }
-die() { echo "${R}smx ai:${N} $*" >&2; exit "${2:-1}"; }
+die() { echo "${R}smx ai:${N} $1" >&2; exit "${2:-1}"; }
 
 ctl() { systemctl --user "$@"; }
 api() { "$opencode" api "$@"; }
@@ -27,6 +28,8 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
+  status [--json]         What agents are doing now
+  open <session>          Show a session: its TUI's window, or a new one
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -76,7 +79,7 @@ watch_raw() {
 snapshot() {
   local url sessions session id
   url=$(server_url)
-  get() { server_curl -sf "$url$1"; }
+  get() { server_curl -sf --max-time 10 "$url$1"; }
   sessions=$(get "/api/session?limit=50" | jq -c '.data[]
     | select(.parentID == null)
     | (.time.busy // 0) as $busy | (.time.idle // 0) as $idle
@@ -140,6 +143,120 @@ watch_command() {
       ;;
     *) die "usage: smx ai watch [--raw | --replay <events.jsonl>]" ;;
   esac
+}
+
+# --- status -------------------------------------------------------------------
+
+# The first line of `watch`: a snapshot, or (if the server's away) that.
+current() {
+  local snap
+  if [ -n "$(server_url)" ] && snap=$(snapshot) && [ -n "$snap" ]; then
+    jq -cn -f "$normalize" <<<"$snap"
+  else
+    jq -cn --arg s "$(server_state)" '{v: 1, type: "server", state: $s}'
+  fi
+}
+
+status() {
+  local now
+  now=$(current)
+  if [ "${1:-}" = --json ]; then
+    echo "$now"
+  elif [ "$(jq -r .type <<<"$now")" = server ]; then
+    if [ "$(jq -r .state <<<"$now")" = stopped ]; then
+      echo "${D}No agents: OpenCode's server isn't running (opencode starts it).${N}"
+    else
+      say "OpenCode's server isn't reachable; see \`smx ai doctor\`"
+    fi
+  elif [ "$(jq '[.sessions[] | select(.parent == null)] | length' <<<"$now")" = 0 ]; then
+    echo "${D}No agents at work.${N}"
+  else
+    jq -r --arg home "$HOME" '.sessions[] | select(.parent == null)
+      | [.state, (if .unseen then "new" else "-" end), .id, (.title // "(untitled)"),
+         ((.dir // "") | if startswith($home) then "~" + .[($home | length):] else . end)] | @tsv' <<<"$now" \
+      | while IFS=$'\t' read -r state unseen id title dir; do
+          case "$state" in
+            working) mark="${A}●${N}" ;;
+            needs-*) mark="${Y}▲${N}" ;;
+            done) mark="${G}✓${N}" ;;
+            failed) mark="${R}✗${N}" ;;
+            *) mark="${D}-${N}" ;;
+          esac
+          printf '%s %-16s %s  %s\n' "$mark" "$state$([ "$unseen" = new ] && echo ", new")" "$title" "${D}$dir  $id${N}"
+        done
+  fi
+  [ "$(jq -r '.state // "up"' <<<"$now")" != down ] || exit 3
+}
+
+# --- open ---------------------------------------------------------------------
+
+# A process's ancestors, from itself up.
+ancestors() {
+  local p=$1
+  while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+    echo "$p"
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+}
+
+# opencode TUIs on a session (started with -s/--session <id>).
+tuis_on() {
+  local pid argv i
+  for pid in $(pgrep -u "$(id -u)" -f -- "$1" || true); do
+    mapfile -d '' argv < "/proc/$pid/cmdline" 2>/dev/null || continue
+    case "$(basename "${argv[0]:-}")" in opencode | .opencode-wrapped) ;; *) continue ;; esac
+    for ((i = 1; i < ${#argv[@]}; i++)); do
+      case "${argv[i]}" in
+        -s | --session) [ "${argv[i + 1]:-}" = "$1" ] && echo "$pid" ;;
+        --session="$1") echo "$pid" ;;
+      esac
+    done
+  done
+}
+
+# The tmux pane (session:window.pane) a process runs in, if any.
+pane_of() {
+  local panes p
+  panes=$(tmux list-panes -a -F '#{pane_pid} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
+  for p in $(ancestors "$1"); do
+    awk -v p="$p" '$1 == p { print $2; found = 1; exit } END { exit !found }' <<<"$panes" && return
+  done
+  return 1
+}
+
+# The niri window showing a tmux session (its client's terminal), if any.
+window_of_tmux_session() {
+  local windows client p
+  windows=$(niri msg --json windows 2>/dev/null) || return 1
+  for client in $(tmux list-clients -t "$1" -F '#{client_pid}' 2>/dev/null); do
+    for p in $(ancestors "$client"); do
+      jq -e --argjson p "$p" 'map(select(.pid == $p)) | first | .id' <<<"$windows" && return
+    done
+  done
+  return 1
+}
+
+open_session() {
+  local id=${1:-} session dir pid pane window
+  [ -n "$id" ] || die "usage: smx ai open <session>"
+  [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
+  session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
+  [ -n "$session" ] || die "no session $id" 4
+  dir=$(jq -r '.location.directory // empty' <<<"$session")
+
+  for pid in $(tuis_on "$id"); do
+    if pane=$(pane_of "$pid"); then
+      if window=$(window_of_tmux_session "${pane%%:*}"); then
+        tmux select-window -t "${pane%.*}" && tmux select-pane -t "$pane"
+        niri msg action focus-window --id "$window"
+        return
+      fi
+    fi
+  done
+
+  # (Not on screen: in a new terminal.)
+  cd "${dir:-$HOME}" 2>/dev/null || cd "$HOME"
+  setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
 }
 
 # --- doctor -----------------------------------------------------------------
@@ -237,6 +354,8 @@ doctor() {
 case "${1:-}" in
   doctor) doctor ;;
   watch) shift; watch_command "$@" ;;
+  status) shift; status "$@" ;;
+  open) shift; open_session "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac
