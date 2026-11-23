@@ -11,14 +11,15 @@
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
 #
-# where <session> is {id, title, dir, project, parent, updated, last, open,
-# terminals, state, unseen, permissions, forms}: its state is needs-permission,
-# needs-input, working, done, failed or idle; unseen is whether it's finished
-# since anyone last looked at it; updated is when (in ms) it last changed, or
-# null; last is its latest reply, in a line, or null; open is whether a TUI
-# shows it, and terminals the processes that TUI's on screen through (its
-# terminal's among them), if any; and project is its repository's name, or
-# null.
+# where <session> is {id, title, dir, project, parent, updated, last, about,
+# open, terminals, state, unseen, permissions, forms}: its state is
+# needs-permission, needs-input, working, done, failed or idle; unseen is
+# whether it's finished since anyone last looked at it; updated is when (in
+# ms) it last changed, or null; last is its latest reply, in a line, or null;
+# about is what it's about (its latest compaction's objective), in a line, or
+# null; open is whether a TUI shows it, and terminals the processes that TUI's
+# on screen through (its terminal's among them), if any; and project is its
+# repository's name, or null.
 #
 # A snapshot has the recent sessions (a few, any running or unseen, and those
 # ones' subagents', whose parent is theirs).
@@ -26,7 +27,7 @@
 #   jq -cn --unbuffered -f normalize.jq
 
 def blank($id; $dir):
-  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, last: null, project: null, permissions: [], forms: []};
+  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, last: null, about: null, project: null, permissions: [], forms: []};
 
 # The TUIs (of these) showing a session.
 def tuis_on($tuis):
@@ -37,7 +38,7 @@ def tuis_on($tuis):
 
 def public($tuis):
   tuis_on($tuis) as $on
-  | {id, title, dir, project, parent, updated, last,
+  | {id, title, dir, project, parent, updated, last, about,
    open: ($on | length > 0), terminals: ([$on[].seen[]] | unique),
    state: (if (.permissions | length) > 0 then "needs-permission"
            elif (.forms | length) > 0 then "needs-input"
@@ -51,8 +52,15 @@ def summary:
   | if length > 240 then .[0:239] + "…" elif length == 0 then null else . end;
 
 # A session as smx ai gives it (smx.snapshot, smx.session).
+# What a session's about, from a compaction's summary: its "## Objective"
+# (or else its first paragraph), in a line.
+def objective:
+  ((capture("(?s)(^|\\n)## Objective\\n+(?<o>.*?)(\\n## |$)").o) // (split("\n\n") | map(select(test("\\S"))) | first) // "")
+  | gsub("(?<s>^|\\n)\\s*[-*] "; "\(.s)") | summary;
+
 def taken:
-  blank(.id; .dir) + . | .last |= (if type == "string" then summary else null end);
+  blank(.id; .dir) + . | .last |= (if type == "string" then summary else null end)
+  | .about |= (if type == "string" then objective else null end);
 
 def apply($e):
   if $e.type == "session.created" then
@@ -61,6 +69,7 @@ def apply($e):
     | .parent = ($e.data.parentID // null)
   elif $e.type == "session.renamed" then .title = $e.data.title
   elif $e.type == "session.text.ended" then .last = ($e.data.text | summary)
+  elif $e.type == "session.compaction.ended" then .about = ($e.data.text | objective)
   elif $e.type == "session.execution.started" then .running = true | .unseen = false
   elif $e.type == "session.execution.succeeded" then .running = false | .outcome = "done" | .unseen = true
   elif $e.type == "session.execution.failed" then .running = false | .outcome = "failed" | .unseen = true

@@ -88,9 +88,9 @@ shape='def shape:
 
 # Sessions (JSON lines in and out), filled in: their project (the name of
 # their folder's repository, its main checkout's, or else of the folder), their
-# latest reply, and what the running ones wait on.
+# latest reply and compaction, and what the running ones wait on.
 filled() {
-  local session id dir running project reply
+  local session id dir running project reply compaction
   local -A projects=()
   while IFS= read -r session; do
     [ -n "$session" ] || continue
@@ -101,8 +101,10 @@ filled() {
     fi
     reply=$(server_get "/api/session/$id/message?limit=10&order=desc&type=assistant" \
       | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) // null' 2>/dev/null) || reply=null
-    session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" \
-      '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r}' <<<"$session")
+    compaction=$(server_get "/api/session/$id/message?limit=3&order=desc&type=compaction" \
+      | jq -c 'first(.data[] | select(.status == "completed") | .summary) // null' 2>/dev/null) || compaction=null
+    session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" --argjson c "${compaction:-null}" \
+      '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r, about: $c}' <<<"$session")
     if [ "$running" = true ]; then
       jq -c --argjson p "$(server_get "/api/session/$id/permission" || echo '{"data":[]}')" \
         --argjson f "$(server_get "/api/session/$id/form" || echo '{"data":[]}')" \
@@ -140,7 +142,7 @@ session_event() {
 # The server's events that watch uses.
 watched=(
   session.created session.renamed session.deleted session.archived session.viewed
-  session.text.ended
+  session.text.ended session.compaction.ended
   session.execution.started session.execution.succeeded session.execution.failed
   session.execution.interrupted permission.asked permission.replied
   form.created form.replied form.cancelled
