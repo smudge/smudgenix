@@ -528,25 +528,17 @@ ok() { echo "${G}✓${N} $1"; }
 bad() { echo "${R}✗${N} $1"; shift; for l in "$@"; do echo "  $l"; done; failed=1; }
 skip() { echo "${D}- $1${N}"; }
 
-# The probe's shell command prints, for each desktop variable it has, its
-# name (and then a marker, once done). Neither appears in the command itself.
-probe_command() {
-  local alt=${1// /\\|}
-  printf '%s\n' "env | sed -n 's/^\\($alt\\)=.*/le''ak:\\1/p'; echo pro''be:done"
-}
-
-# Runs the probe in a throwaway session, given these variables (as a client
-# would), and prints the ones its command still had.
-probe_agent_env() {
-  local names=$1 sid vars messages
+# Runs a shell command in a throwaway session, given these variables (a JSON
+# object, as a client would give them), and prints the session's messages
+# once its output has the marker (probe:done; never in the command itself).
+probe_shell() {
+  local vars=$1 command=$2 sid messages=""
   mkdir -p "$probe_dir"
   sid=$(api POST /api/session -d "$(jq -n --arg d "$probe_dir" \
     '{title: "smx ai doctor", location: {directory: $d}}')" | jq -r '.data.id // .id // empty') || return 1
   [ -n "$sid" ] || return 1
-  vars=$(jq -n --arg names "$names" --arg path "$PATH" \
-    '($names | split(" ") | map({key: ., value: "smx-ai-probe"}) | from_entries) + {PATH: $path}')
   api PUT "/api/session/$sid/environment" -d "$(jq -n --argjson v "$vars" '{variables: $v}')" >/dev/null
-  api POST "/api/session/$sid/shell" -d "$(jq -n --arg c "$(probe_command "$names")" '{command: $c}')" >/dev/null
+  api POST "/api/session/$sid/shell" -d "$(jq -n --arg c "$command" '{command: $c}')" >/dev/null
   for _ in $(seq 50); do
     messages=$(api GET "/api/session/$sid/message" 2>/dev/null)
     grep -q 'probe:done' <<<"$messages" && break
@@ -554,7 +546,47 @@ probe_agent_env() {
   done
   api DELETE "/api/session/$sid" >/dev/null 2>&1 || true
   grep -q 'probe:done' <<<"$messages" || return 1
+  echo "$messages"
+}
+
+# The probe's shell command prints, for each desktop variable it has, its
+# name (and then a marker, once done). Neither appears in the command itself.
+probe_command() {
+  local alt=${1// /\\|}
+  printf '%s\n' "env | sed -n 's/^\\($alt\\)=.*/le''ak:\\1/p'; echo pro''be:done"
+}
+
+# Runs the probe given these variables (as a client would pass them), and
+# prints the ones its command still had.
+probe_agent_env() {
+  local names=$1 vars messages
+  vars=$(jq -n --arg names "$names" --arg path "$PATH" \
+    '($names | split(" ") | map({key: ., value: "smx-ai-probe"}) | from_entries) + {PATH: $path}')
+  messages=$(probe_shell "$vars" "$(probe_command "$names")") || return 1
   { grep -oE 'leak:[A-Z_]+' <<<"$messages" || true; } | sed 's/^leak://' | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+# What an agent's command can reach of what it shouldn't (see ../nixos/ai.nix:
+# server.runtimeDir and readOnly), by name: the desktop's sockets (found
+# without the variables), the user manager's, X11's; changing what runs at
+# login; gaining privileges.
+probe_reach() {
+  local messages
+  # shellcheck disable=SC2016
+  messages=$(probe_shell "$(jq -n --arg p "$PATH" --arg h "$HOME" '{PATH: $p, HOME: $h}')" '
+    r=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+    ls "$r"/niri.*.sock >/dev/null 2>&1 && echo re""ach:niri
+    ls "$r"/wayland-* >/dev/null 2>&1 && echo re""ach:wayland
+    ls /tmp/.X11-unix/X* >/dev/null 2>&1 && echo re""ach:x11
+    [ -S "$r/systemd/io.systemd.Manager" ] && echo re""ach:user-manager
+    ls "$r"/pipewire-* >/dev/null 2>&1 && echo re""ach:audio
+    for d in '"$(printf '%q ' "${read_only[@]}")"'; do
+      [ -e "$HOME/$d" ] || continue
+      t="$HOME/$d/.smx-ai-probe"; if touch "$t" 2>/dev/null; then rm -f "$t"; echo "re""ach:write:$d"; fi
+    done
+    grep -q "^NoNewPrivs:[[:space:]]*0" /proc/self/status && echo re""ach:new-privileges
+    echo pro""be:done') || return 1
+  { grep -oE 'reach:[a-z0-9:./-]+' <<<"$messages" || true; } | sed 's/^reach://' | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
 doctor() {
@@ -607,6 +639,25 @@ doctor() {
   else
     bad "Agents' commands run without the desktop" \
       "They get $leaked from their client (the server lacks smudgenix's OpenCode plugin?)." \
+      "After updating the OS, \`opencode service restart\` (which disconnects its sessions)."
+  fi
+
+  read_only=()
+  for path in $(ctl show "$unit" -p ReadOnlyPaths --value); do
+    path=${path#-}
+    read_only+=("${path#"$HOME"/}")
+  done
+  # (Or, on a server from before it had any, smudgenix's defaults.)
+  [ "${#read_only[@]}" -gt 0 ] || read_only=(.config/systemd .config/autostart .config/environment.d)
+  if [ "$used" != "$main" ]; then
+    skip "Agents' commands can't reach the desktop, or change what runs at login (not checked: opencode uses another server)"
+  elif ! reached=$(probe_reach); then
+    bad "Agents' commands can't reach the desktop, or change what runs at login" "Couldn't run a command in a test session."
+  elif [ -z "$reached" ]; then
+    ok "Agents' commands can't reach the desktop, or change what runs at login ${D}(but the bus reaches systemd-run --user)${N}"
+  else
+    bad "Agents' commands can't reach the desktop, or change what runs at login" \
+      "They can reach: $reached." \
       "After updating the OS, \`opencode service restart\` (which disconnects its sessions)."
   fi
 

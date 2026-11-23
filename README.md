@@ -69,10 +69,20 @@ OpenCode's server runs as each user's `opencode` service, which `opencode`
 starts (and uses) on demand, and agents' commands run without the desktop's
 environment, even the one a client passes on
 (`smudgenix.ai.server.unsetEnvironment`), so nothing they run finds niri or
-your windows by accident. (It isn't a sandbox: they keep the session bus, and
-so the keyring's `gh` and git credentials, and the SSH agent.)
+your windows by accident. Nor can they reach its sockets (only the session
+bus, the SSH agent and GnuPG's, of `$XDG_RUNTIME_DIR`:
+`smudgenix.ai.server.runtimeDir`), change what runs at login (user units,
+autostart: `server.readOnly`), or gain privileges.
 `opencode service start|stop|restart` goes through the service, and
 `smx ai doctor` checks all of it.
+
+That isn't a sandbox yet. Through the session bus, an agent's command can
+still reach the keyring (and so `gh` and git's credentials, and every other
+secret) and `systemd-run --user` (a process outside all of the above); it
+can sign with the SSH agent; and it shares the server's files, including its
+password and its saved permissions, so it could answer its own requests.
+OpenCode's permission prompts are advice to a cooperative agent, not a
+boundary, until each command runs in its own sandbox (planned).
 
 On the desktop, the bar shows what agents are doing (and tells you when one
 needs you or finishes), and Mod+A shows them, with recent sessions to return

@@ -77,6 +77,27 @@ in
         so `gh`'s and git's credentials) and the SSH agent stay.
       '';
     };
+    server.runtimeDir = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "bus" "ssh-agent" "gnupg" ];
+      example = [ "bus" ];
+      description = ''
+        What of `$XDG_RUNTIME_DIR` OpenCode's server, and so agents' commands,
+        can reach (where it exists): by default the session bus, the SSH agent
+        and GnuPG's sockets. The rest (niri's and Wayland's sockets, the user
+        manager's, audio, …) is out of reach: unsetting variables only hides
+        them, as they're easily guessed.
+      '';
+    };
+    server.readOnly = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ".config/systemd" ".config/autostart" ".config/environment.d" ];
+      description = ''
+        What in your home OpenCode's server, and so agents' commands, can't
+        change: by default what runs things at login (user units, autostart,
+        the session's environment). Created first if missing.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -90,10 +111,18 @@ in
       environment.OPENCODE_CONFIG = "${opencodeConfig}";
       serviceConfig = {
         Type = "exec";
-        ExecStartPre = checkFree;
+        ExecStartPre = [ checkFree "${pkgs.coreutils}/bin/mkdir -p ${lib.concatMapStringsSep " " (p: "%h/${p}") cfg.server.readOnly}" ];
         ExecStart = "${unwrapped} serve --service";
         ExecStartPost = awaitReady;
         UnsetEnvironment = cfg.server.unsetEnvironment;
+        # (See server.runtimeDir and server.readOnly. Only these paths: the
+        # bus still reaches `systemd-run --user`, outside them, and agents'
+        # commands share the server's files.)
+        TemporaryFileSystem = "%t";
+        BindPaths = map (p: "-%t/${p}") cfg.server.runtimeDir;
+        InaccessiblePaths = [ "-/tmp/.X11-unix" ];
+        ReadOnlyPaths = map (p: "-%h/${p}") cfg.server.readOnly;
+        NoNewPrivileges = true;
         # (Its exit on SIGTERM.)
         SuccessExitStatus = 143;
         Restart = "on-failure";
