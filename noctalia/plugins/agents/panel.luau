@@ -1,7 +1,8 @@
 --!nonstrict
--- The agents overlay (Mod+A, or the bar widget): what they're doing now (or
--- have open in a TUI), and recent sessions to return to (from the service),
--- with subagents under the sessions that started them. ↑/↓ (or k/j) choose,
+-- The agents overlay (Mod+A, or the bar widget): tasks in review (smx ai
+-- review), what agents are doing now (or have open in a TUI), and recent
+-- sessions to return to (from the service), with subagents under the
+-- sessions that started them. ↑/↓ (or k/j) choose,
 -- →/← (or l/h) open and close a session's subagents, Enter or a click shows
 -- one (smx ai open).
 
@@ -176,7 +177,84 @@ end
 
 -- The first request a row's session is waiting on, if any.
 local function asks(entry)
-  return entry and entry.session.permissions and entry.session.permissions[1]
+  return entry and entry.session and entry.session.permissions and entry.session.permissions[1]
+end
+
+-- (For a shell command line: a terminal's command is one.)
+local function quote(s)
+  return "'" .. (tostring(s):gsub("'", "'\\''")) .. "'"
+end
+
+-- Runs `smx ai …`, saying so if it fails (e.g. accepting a stale review).
+local function run(argv)
+  noctalia.runAsync(argv, function(result)
+    if result.exitCode ~= 0 then
+      noctalia.notifyError("smx ai " .. argv[3], ((result.stderr or ""):gsub("^smx ai: ", "")))
+    end
+  end)
+end
+
+-- A task's change, or one file of it, in a terminal (smx ai diff).
+local function inspect(task, path)
+  local command = "smx ai diff " .. quote(task.id)
+  if path then command ..= " -- " .. quote(path) end
+  noctalia.runInTerminal(command)
+end
+
+-- A task in review: what to look at, and (selected) what it says it did and
+-- each place to look (a click shows it).
+local function taskRow(entry, index)
+  local task = entry.task
+  local review = task.review or {}
+  local spots = review.hotspots or {}
+  local isSelected = index == selected
+  local stale = task.stale ~= nil
+
+  local details = { task.state == "revising" and "revising" or "in review" }
+  if stale then table.insert(details, "stale: changed since it was frozen") end
+  table.insert(details, #spots == 0 and "nothing flagged" or #spots == 1 and "1 place to look" or `{#spots} places to look`)
+  local when = ago(task.updated)
+  if when then table.insert(details, when) end
+
+  local top = { ui.label({ text = task.title or "(untitled)", maxLines = 1, flexGrow = 1 }) }
+  if task.project then table.insert(top, chip(task.project)) end
+  local lines = {
+    ui.row({ gap = 8, align = "center" }, top),
+    ui.label({ text = table.concat(details, "  ·  "), fontSize = 11, color = stale and "tertiary" or "on_surface/0.6", maxLines = 1 }),
+  }
+  if isSelected then
+    if review.outcome and review.outcome.text then
+      table.insert(lines, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.75", maxLines = 3 }))
+    end
+    for _, spot in spots do
+      table.insert(lines, ui.row({ gap = 6, align = "center", onClick = function() inspect(task, spot.path) end }, {
+        ui.glyph({ name = "alert-triangle", size = 12, color = "tertiary" }),
+        ui.label({ text = spot.path .. (spot.hunk and ("  " .. spot.hunk) or "") .. ": " .. spot.why, fontSize = 11, maxLines = 1 }),
+      }))
+    end
+  end
+
+  return ui.row({
+    key = "row-" .. index,
+    gap = 8, padding = 8, radius = 8, align = "center",
+    fill = isSelected and "primary/0.15" or nil,
+    onClick = function() inspect(task) end,
+  }, {
+    ui.box({ width = 14, height = 14 }),
+    ui.glyph({ name = "git-pull-request", size = 18, color = stale and "tertiary" or "secondary" }),
+    ui.column({ gap = 2, flexGrow = 1 }, lines),
+  })
+end
+
+-- What the keys do, on this row.
+local function hints(entry)
+  if entry and entry.task then
+    return entry.task.stale and "p review again  ·  Enter diff  ·  r tell it  ·  d defer  ·  Esc close"
+      or "a accept  ·  Enter diff  ·  r tell it what to change  ·  d defer  ·  Esc close"
+  elseif asks(entry) then
+    return "a allow  ·  Shift+A always  ·  d deny  ·  ↑↓ choose  ·  Enter open  ·  Esc close"
+  end
+  return "↑↓ choose  ·  →← subagents  ·  p prepare for review  ·  Enter open  ·  Esc close"
 end
 
 local function heading(text)
@@ -205,6 +283,17 @@ function render()
   shown = {}
   spinning = false
   local rows = {}
+  local reviewing = {}
+  for _, task in agents.tasks or {} do
+    if task.state == "in-review" or task.state == "revising" then table.insert(reviewing, task) end
+  end
+  if #reviewing > 0 then
+    table.insert(rows, heading("Review"))
+    for _, task in reviewing do
+      table.insert(shown, { task = task, depth = 0 })
+      table.insert(rows, taskRow(shown[#shown], #shown))
+    end
+  end
   local function add(session, depth, parent, isNow)
     table.insert(shown, { session = session, depth = depth, parent = parent })
     local index = #shown
@@ -241,8 +330,7 @@ function render()
   panel.render(ui.column({ padding = 14, gap = 6 }, {
     ui.label({ text = "Agents", fontSize = 15, fontWeight = "bold" }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "row-" .. selected }, rows),
-    ui.label({ text = asks(shown[selected]) and "a allow  ·  Shift+A always  ·  d deny  ·  ↑↓ choose  ·  Enter open  ·  Esc close"
-      or "↑↓ choose  ·  →← subagents  ·  Enter open  ·  Esc close", fontSize = 11, color = "on_surface/0.5" }),
+    ui.label({ text = hints(shown[selected]), fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
 
@@ -266,7 +354,7 @@ function onOpen(context)
   render()
   if type(context) == "string" and context ~= "" then
     for index, entry in shown do
-      if entry.session.id == context then
+      if entry.session and entry.session.id == context then
         selected = index
         render()
         break
@@ -283,11 +371,28 @@ end
 function onKey(chord, pressed)
   if not (pressed == true or pressed == "true") then return end
   local entry = shown[selected]
+  local task = entry and entry.task
+  if task and (chord == "a" or chord == "d" or chord == "r" or chord == "p" or chord == "Return") then
+    if chord == "a" then
+      run({ "smx", "ai", "accept", task.id })
+    elseif chord == "d" then
+      run({ "smx", "ai", "defer", task.id })
+    elseif chord == "r" then
+      noctalia.runAsync({ "smx", "ai", "open", task.session }) -- (to say what to change)
+      panel.close()
+    elseif chord == "p" then
+      run({ "smx", "ai", "review", task.session }) -- (again: a new round)
+    else
+      inspect(task)
+    end
+    return
+  end
+  local session = entry and entry.session
   if chord == "Down" or chord == "j" then
     selected = math.min(selected + 1, math.max(1, #shown))
   elseif chord == "Up" or chord == "k" then
     selected = math.max(selected - 1, 1)
-  elseif (chord == "Right" or chord == "l") and entry then
+  elseif (chord == "Right" or chord == "l") and session then
     local _, children = trees((noctalia.state.get("agents") or {}).sessions or {})
     if children[entry.session.id] then
       if isExpanded(entry.session, children) then
@@ -296,7 +401,7 @@ function onKey(chord, pressed)
         expanded[entry.session.id] = true
       end
     end
-  elseif (chord == "Left" or chord == "h") and entry then
+  elseif (chord == "Left" or chord == "h") and session then
     local _, children = trees((noctalia.state.get("agents") or {}).sessions or {})
     if children[entry.session.id] and isExpanded(entry.session, children) then
       expanded[entry.session.id] = false
@@ -306,8 +411,11 @@ function onKey(chord, pressed)
   elseif (chord == "a" or chord == "Shift+A" or chord == "Shift+a" or chord == "d") and asks(entry) then
     answer(asks(entry), chord == "d" and "deny" or chord == "a" and "once" or "always")
     return
+  elseif chord == "p" and session then
+    run({ "smx", "ai", "review", session.id }) -- (prepare it for review)
+    return
   elseif chord == "Return" then
-    if entry then show(entry.session) end
+    if session then show(session) end
     return
   end
   render()

@@ -1,11 +1,13 @@
 --!nonstrict
 -- The agents' bar widget: what they're doing (from the service), most urgent
--- first. Click: the sessions; right-click: check on them (smx ai doctor).
+-- first, and nothing at all when nothing needs you, there's nothing to
+-- review and none is at work (Mod+A still shows them). Click: the overlay;
+-- right-click: check on them (smx ai doctor).
 
-local function count(sessions, keep)
+local function count(list, keep)
   local n = 0
-  for _, session in sessions do
-    if keep(session) then n += 1 end
+  for _, item in list do
+    if keep(item) then n += 1 end
   end
   return n
 end
@@ -16,8 +18,11 @@ local function render(agents)
   local needYou = count(sessions, function(s) return s.state == "needs-permission" or s.state == "needs-input" end)
   -- (A subagent's work is its parent's; what one needs from you is yours.)
   local working = count(sessions, function(s) return s.parent == nil and s.state == "working" end)
-  local unseen = count(sessions, function(s) return s.parent == nil and s.unseen end)
+  -- To review: tasks in review, and sessions finished since you looked.
+  local review = count(agents.tasks or {}, function(t) return t.state == "in-review" end)
+    + count(sessions, function(s) return s.parent == nil and s.unseen end)
 
+  barWidget.setVisible(true)
   if agents.server == "down" then
     barWidget.setGlyph("robot-off")
     barWidget.setGlyphColor("error")
@@ -28,21 +33,19 @@ local function render(agents)
     barWidget.setGlyphColor("tertiary")
     barWidget.setText(tostring(needYou))
     barWidget.setTooltip(`Agents: {needYou} waiting on you`)
-  elseif working > 0 then
-    barWidget.setGlyph("robot")
-    barWidget.setGlyphColor("primary")
-    barWidget.setText(tostring(working))
-    barWidget.setTooltip(`Agents: {working} at work` .. (unseen > 0 and `, {unseen} finished` or ""))
-  elseif unseen > 0 then
+  elseif review > 0 then
     barWidget.setGlyph("robot")
     barWidget.setGlyphColor("secondary")
-    barWidget.setText(tostring(unseen))
-    barWidget.setTooltip(`Agents: {unseen} finished`)
-  else
+    barWidget.setText(tostring(review))
+    barWidget.setTooltip(`Agents: {review} to review` .. (working > 0 and `, {working} at work` or ""))
+  elseif working > 0 then
+    -- (At work needs nothing from you: a quiet glyph, no count.)
     barWidget.setGlyph("robot")
-    barWidget.setGlyphColor("on_surface/0.6")
+    barWidget.setGlyphColor("primary")
     barWidget.setText("")
-    barWidget.setTooltip(agents.server == "up" and "Agents: none at work" or "Agents: none (OpenCode's server isn't running)")
+    barWidget.setTooltip(`Agents: {working} at work`)
+  else
+    barWidget.setVisible(false)
   end
 end
 
