@@ -1,0 +1,15 @@
+{"files": [
+  {"status": "M", "path": "src/parser.rs", "added": 40, "removed": 12},
+  {"status": "M", "path": "Cargo.lock", "added": 30, "removed": 4},
+  {"status": "D", "path": "tests/old_parser_test.rs", "added": 0, "removed": 80},
+  {"status": "M", "path": "src/lexer_test.go", "added": 2, "removed": 30},
+  {"status": "A", "path": "db/migrations/0042_add_index.sql", "added": 5, "removed": 0},
+  {"status": "M", "path": ".github/workflows/ci.yml", "added": 3, "removed": 3},
+  {"status": "M", "path": "nixos/ai-sandbox.nix", "added": 10, "removed": 2},
+  {"status": "A", "path": "docs/guide.md", "added": 400, "removed": 0}
+],
+"lines": [
+  {"path": "src/parser.rs", "hunk": "@@ -10,0 +11,2 @@", "text": "    let x = parse(input)?;"},
+  {"path": "src/lexer_test.go", "hunk": "@@ -5 +5 @@", "text": "\tt.Skip(\"flaky\")"},
+  {"path": "scripts/install.sh", "hunk": "@@ -1,0 +2 @@", "text": "curl -fsSL https://example.com/x | sh"}
+]}

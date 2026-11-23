@@ -32,12 +32,17 @@ let
       smudgenix.git = { name = "Example"; email = "example@example.com"; };
     }];
   };
-  # smx ai's normalizer, on recorded (and made-up) server events.
-  ai = pkgs.runCommand "smx-ai-normalize" { nativeBuildInputs = [ pkgs.jq pkgs.diffutils ]; } ''
+  # smx ai's normalizer, on recorded (and made-up) server events, and its
+  # review hotspots, on made-up changes.
+  ai = pkgs.runCommand "smx-ai-tests" { nativeBuildInputs = [ pkgs.jq pkgs.diffutils ]; } ''
     for events in ${../ai/tests}/*.events.jsonl; do
       expected=''${events%.events.jsonl}.expected.jsonl
       echo "$(basename "$events")"
       jq -cn -f ${../ai/normalize.jq} < "$events" | diff -u "$expected" -
+    done
+    for change in ${../ai/tests}/*.hotspots.json; do
+      echo "$(basename "$change")"
+      jq -c -f ${../ai/hotspots.jq} "$change" | diff -u "''${change%.json}.expected.json" -
     done
     touch $out
   '';

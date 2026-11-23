@@ -37,6 +37,16 @@ Agents (OpenCode), as part of the desktop.
   deny <request>          Don't
   allowed [--json]        What's allowed from now on
   allowed revoke <id>     Ask again for it
+  review <session> [--since <commit>]
+                          Make a session's work a task in review: what
+                          changed (frozen), where to look, what it says
+  task [<task>] [--json]  Tasks, or one, and whether a review's stale
+  diff <task> [--stale] [<path>…]
+                          What a review is of (--stale: what's changed since)
+  accept <task>           It's good
+  revise <task> "<what to change>"
+                          Send it back to its session
+  defer <task>            Not now
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -412,6 +422,292 @@ open_session() {
   setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
 }
 
+# --- tasks and review ---------------------------------------------------------
+
+# Tasks are smx ai's own: a folder each, which agents' commands can't change
+# (their sandbox hides it). SMX_AI_TASKS points elsewhere, for tests.
+tasks_dir=${SMX_AI_TASKS:-${XDG_DATA_HOME:-$HOME/.local/share}/smudgenix/tasks}
+empty_tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+
+task_json() {
+  [ -f "$tasks_dir/$1/task.json" ] || die "no task $1" 4
+  cat "$tasks_dir/$1/task.json"
+}
+
+save_task() {
+  local id
+  id=$(jq -r .id <<<"$1")
+  mkdir -p "$tasks_dir/$id"
+  jq . <<<"$1" >"$tasks_dir/$id/task.json.new" && mv "$tasks_dir/$id/task.json.new" "$tasks_dir/$id/task.json"
+}
+
+now_ms() { echo $(($(date +%s%N) / 1000000)); }
+
+# A repository's working tree as git would commit it (untracked files too,
+# ignored ones not), as a tree, without touching its index or files.
+worktree_tree() {
+  local index
+  index=$(mktemp)
+  cp "$(git -C "$1" rev-parse --path-format=absolute --git-path index)" "$index" 2>/dev/null || rm -f "$index"
+  GIT_INDEX_FILE=$index git -C "$1" add -A >/dev/null 2>&1 || true
+  GIT_INDEX_FILE=$index git -C "$1" write-tree
+  rm -f "$index"
+}
+
+# Freezes it, as a commit on HEAD (or HEAD itself, if nothing's changed) that
+# a ref keeps: what a review is of. (Commits only smx ai makes, never pushed.)
+freeze() {
+  local repo=$1 ref=$2 title=$3 tree head parents=()
+  tree=$(worktree_tree "$repo")
+  if head=$(git -C "$repo" rev-parse -q --verify HEAD); then
+    parents=(-p "$head")
+    if [ "$(git -C "$repo" rev-parse "HEAD^{tree}")" = "$tree" ]; then
+      git -C "$repo" update-ref "$ref" "$head"
+      echo "$head"
+      return
+    fi
+  fi
+  commit=$(GIT_AUTHOR_NAME="smx ai" GIT_AUTHOR_EMAIL=smx-ai@localhost \
+    GIT_COMMITTER_NAME="smx ai" GIT_COMMITTER_EMAIL=smx-ai@localhost \
+    git -C "$repo" commit-tree "$tree" "${parents[@]}" -m "smx ai review: $title")
+  git -C "$repo" update-ref "$ref" "$commit"
+  echo "$commit"
+}
+
+# What a session's work is measured from: $3 if given; else where its branch
+# left the default one; else (on the default branch) the last commit before
+# the session began (at $2, in ms); else nothing (the empty tree).
+review_base() {
+  local repo=$1 since=$3 default branch base
+  if [ -n "$since" ]; then
+    git -C "$repo" rev-parse --verify -q "$since^{commit}" || die "no commit $since" 4
+    return
+  fi
+  default=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) || default=""
+  for name in main master; do
+    [ -n "$default" ] || ! git -C "$repo" rev-parse -q --verify "refs/heads/$name" >/dev/null || default=$name
+  done
+  branch=$(git -C "$repo" symbolic-ref -q --short HEAD) || branch=""
+  if [ -n "$default" ] && [ -n "$branch" ] && [ "$branch" != "${default#origin/}" ] \
+    && base=$(git -C "$repo" merge-base HEAD "$default" 2>/dev/null); then
+    echo "$base"
+    return
+  fi
+  base=$(git -C "$repo" rev-list -1 --first-parent --before="$(($2 / 1000))" HEAD 2>/dev/null || true)
+  echo "${base:-$empty_tree}"
+}
+
+# A change (from $2 to $3), as ./hotspots.jq takes it: its files, with
+# what's added and removed, and its added lines (at most a few thousand).
+change_json() {
+  local repo=$1 from=$2 to=$3
+  {
+    git -C "$repo" diff -M --name-status -z "$from" "$to" | while IFS= read -r -d '' status; do
+      case "$status" in
+        R* | C*) IFS= read -r -d '' _; IFS= read -r -d '' path ;;
+        *) IFS= read -r -d '' path ;;
+      esac
+      jq -cn --arg s "${status:0:1}" --arg p "$path" '{status: $s, path: $p}'
+    done | jq -cs '{statuses: .}'
+    git -C "$repo" diff -M --numstat -z "$from" "$to" | while IFS= read -r -d '' record; do
+      IFS=$'\t' read -r added removed path <<<"$record"
+      if [ -z "$path" ]; then IFS= read -r -d '' _; IFS= read -r -d '' path; fi
+      jq -cn --arg a "$added" --arg r "$removed" --arg p "$path" \
+        '{path: $p, added: ($a | tonumber? // 0), removed: ($r | tonumber? // 0)}'
+    done | jq -cs '{counts: .}'
+    git -C "$repo" diff -M -U0 --no-color "$from" "$to" | awk '
+      /^\+\+\+ / { path = substr($0, 7); next }
+      /^@@/ { hunk = $0; sub(/ @@.*/, " @@", hunk); next }
+      /^\+/ && n < 5000 { n++; print path "\t" hunk "\t" substr($0, 2, 500) }' \
+      | jq -Rcs '{lines: [split("\n")[] | select(. != "") | split("\t") | {path: .[0], hunk: .[1], text: (.[2:] | join("\t"))}]}'
+  } | jq -cs 'add | (.counts | map({key: .path, value: .}) | from_entries) as $c
+    | {files: [.statuses[] | . + ($c[.path] // {added: 0, removed: 0})], lines}'
+}
+
+# The session's latest reply: what it says it did (a claim, not evidence).
+latest_reply() {
+  server_get "/api/session/$1/message?limit=10&order=desc&type=assistant" \
+    | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) // null'
+}
+
+# review: makes a session's work a task in review (or, if it is one, a new
+# round of it): what changed, frozen; where to look; what it says it did.
+review() {
+  local session="" since="" json="" sess dir repo title created id task round
+  local base candidate tree change hotspots reply project
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --since) since=${2:-}; shift ;;
+      --json) json=1 ;;
+      -*) die "usage: smx ai review <session> [--since <commit>] [--json]" ;;
+      *) session=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] || die "usage: smx ai review <session> [--since <commit>] [--json]"
+  [ -n "$(server_url)" ] || die "OpenCode's server isn't running" 3
+  sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
+  [ -n "$sess" ] || die "no session $session" 4
+  dir=$(jq -r '.location.directory // empty' <<<"$sess")
+  title=$(jq -r '.title // "(untitled)"' <<<"$sess")
+  created=$(jq -r '.time.created // 0' <<<"$sess")
+  repo=$(git -C "${dir:-/}" rev-parse --show-toplevel 2>/dev/null) || die "${dir:-its folder} isn't in a git repository: nothing to review"
+
+  # (A session's open task gets a new round.)
+  task=""
+  for file in "$tasks_dir"/*/task.json; do
+    [ -f "$file" ] || continue
+    if jq -e --arg s "$session" '.session == $s and .state != "accepted"' "$file" >/dev/null; then
+      task=$(cat "$file")
+      break
+    fi
+  done
+  if [ -n "$task" ]; then
+    id=$(jq -r .id <<<"$task")
+    round=$(($(jq '.rounds | length' <<<"$task") + 1))
+  else
+    id="tsk_$(date +%Y%m%d%H%M%S)_$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+    round=1
+    project=$(basename "$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir | sed 's#/\.git$##')")
+    task=$(jq -cn --arg id "$id" --arg t "$title" --arg p "$project" --arg r "$repo" --arg s "$session" --argjson now "$(now_ms)" \
+      '{v: 1, id: $id, title: $t, project: $p, dir: $r, session: $s, state: "in-review", created: $now, updated: $now, rounds: []}')
+  fi
+
+  base=$(review_base "$repo" "$created" "$since")
+  candidate=$(freeze "$repo" "refs/smudgenix/tasks/$id/$round" "$title")
+  tree=$(git -C "$repo" rev-parse "$candidate^{tree}")
+  if [ "$(git -C "$repo" rev-parse "$base^{tree}" 2>/dev/null || echo "$base")" = "$tree" ]; then
+    git -C "$repo" update-ref -d "refs/smudgenix/tasks/$id/$round"
+    echo "${D}Nothing to review: no changes since ${base:0:12}.${N}"
+    return
+  fi
+  change=$(change_json "$repo" "$base" "$candidate")
+  hotspots=$(jq -c -f "$hotspots_filter" <<<"$change")
+  reply=$(latest_reply "$session") || reply=null
+  task=$(jq -c --argjson round "$round" --arg base "$base" --arg candidate "$candidate" --arg tree "$tree" \
+    --argjson change "$change" --argjson hotspots "$hotspots" --argjson reply "${reply:-null}" --argjson now "$(now_ms)" \
+    '.state = "in-review" | .updated = $now
+     | .rounds += [{round: $round, base: $base, candidate: $candidate, tree: $tree, frozen: $now,
+         outcome: (if $reply then {text: $reply, by: "agent"} else null end),
+         files: $change.files, hotspots: $hotspots}]' <<<"$task")
+  save_task "$task"
+  if [ -n "$json" ]; then task_view "$id"; else show_task "$id"; fi
+}
+
+# A task, as JSON, with whether its review is stale: what's changed in its
+# repository since (files, from the frozen revision to the working tree).
+task_view() {
+  local task repo tree last stale="[]"
+  task=$(task_json "$1")
+  repo=$(jq -r .dir <<<"$task")
+  last=$(jq -c '.rounds | last // empty' <<<"$task")
+  if [ -n "$last" ] && [ -d "$repo" ] && tree=$(worktree_tree "$repo" 2>/dev/null) \
+    && [ "$tree" != "$(jq -r .tree <<<"$last")" ]; then
+    stale=$(git -C "$repo" diff --name-only -z "$(jq -r .candidate <<<"$last")" "$tree" | jq -Rcs 'split("\u0000") | map(select(. != ""))')
+  fi
+  jq -c --argjson stale "$stale" '(.rounds | last) as $r | (.rounds | length) as $n
+    | del(.rounds) + {review: $r, rounds: $n, stale: (if $stale == [] then null else $stale end)}' <<<"$task"
+}
+
+show_task() {
+  local view
+  view=$(task_view "$1")
+  jq -r --arg home "$HOME" --arg D "$D" --arg N "$N" --arg Y "$Y" --arg A "$A" '
+    def home: if startswith($home) then "~" + .[($home | length):] else . end;
+    .review as $r
+    | "\(.title)  \($D)\(.project)  \(.id)\($N)",
+      "\(.state)\(if .stale then ", \($Y)stale\($N): \(.stale | length) file(s) changed since it was frozen" else "" end)  \($D)round \($r.round), \($r.base[0:12])..\($r.candidate[0:12])  \(.dir | home)\($N)",
+      "",
+      (if $r.outcome then "What it says it did \($D)(a claim, not evidence)\($N):", "  " + ($r.outcome.text | gsub("\n"; "\n  ")), "" else empty end),
+      (if ($r.hotspots | length) > 0 then "Where to look:", ($r.hotspots[] | "  \($Y)▲\($N) \(.path)\(if .hunk then " \($D)\(.hunk)\($N)" else "" end): \(.why)"), "" else "Where to look: nothing flagged mechanically (still read the diff).", "" end),
+      "Changes (\($r.files | length) files):",
+      ($r.files[] | "  \(.status) \(.path)  \($D)+\(.added) -\(.removed)\($N)")' <<<"$view"
+}
+
+task_command() {
+  local json="" id=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --json) json=1 ;;
+      -*) die "usage: smx ai task [<task>] [--json]" ;;
+      *) id=$1 ;;
+    esac
+    shift
+  done
+  if [ -n "$id" ]; then
+    if [ -n "$json" ]; then task_view "$id"; else show_task "$id"; fi
+    return
+  fi
+  local tasks="[]" file
+  for file in "$tasks_dir"/*/task.json; do
+    [ -f "$file" ] || continue
+    tasks=$(jq -c --argjson t "$(task_view "$(jq -r .id "$file")")" '. + [$t]' <<<"$tasks")
+  done
+  tasks=$(jq -c 'sort_by(-.updated)' <<<"$tasks")
+  if [ -n "$json" ]; then
+    jq -c '{v: 1, tasks: .}' <<<"$tasks"
+  elif [ "$tasks" = "[]" ]; then
+    echo "${D}No tasks. (smx ai review <session> makes one of a session's work.)${N}"
+  else
+    jq -r --arg D "$D" --arg N "$N" --arg Y "$Y" '.[] | "\(.state)\(if .stale then ", stale" else "" end)\t\(.title)\t\(.project)\t\(.review.hotspots | length)\t\(.id)"' <<<"$tasks" \
+      | while IFS=$'\t' read -r state title project spots id; do
+          printf '%-22s %s  %s\n' "$state" "$title" "${D}$project  $spots to look at  $id${N}"
+        done
+  fi
+}
+
+# diff: the change a task's review is of (or, with --stale, what's changed
+# since it was frozen), in a pager.
+diff_command() {
+  local id=${1:-} task last repo from to
+  [ -n "$id" ] || die "usage: smx ai diff <task> [--stale] [<path>…]"
+  shift
+  task=$(task_json "$id")
+  last=$(jq -c '.rounds | last' <<<"$task")
+  repo=$(jq -r .dir <<<"$task")
+  from=$(jq -r .base <<<"$last") to=$(jq -r .candidate <<<"$last")
+  if [ "${1:-}" = --stale ]; then
+    shift
+    from=$to to=$(worktree_tree "$repo")
+  fi
+  git -C "$repo" -c core.pager="less -R" diff -M "$from" "$to" -- "$@"
+}
+
+# accept|revise|defer: what you decide, recorded on the task. (Accepting a
+# stale review is refused: you'd accept what you haven't seen.)
+decide() {
+  local verb=$1 id=${2:-} comments=${3:-} task view session
+  [ -n "$id" ] || die "usage: smx ai $verb <task>$([ "$verb" = revise ] && echo ' "<what to change>"')"
+  view=$(task_view "$id")
+  task=$(task_json "$id")
+  case "$verb" in
+    accept)
+      [ "$(jq -r .state <<<"$view")" != accepted ] || { echo "${D}Nothing to do: $id is accepted already.${N}"; return; }
+      [ "$(jq -r '.stale // empty' <<<"$view")" = "" ] \
+        || die "$id's review is stale: it's changed since it was frozen (smx ai review $(jq -r .session <<<"$task") again)"
+      task=$(jq -c --argjson now "$(now_ms)" '.state = "accepted" | .updated = $now | .accepted = {round: (.rounds | length), at: $now}' <<<"$task")
+      save_task "$task"
+      echo "${G}✓${N} Accepted: $(jq -r .title <<<"$task") ${D}(round $(jq '.rounds | length' <<<"$task"), $(jq -r '.rounds | last | .candidate[0:12]' <<<"$task"))${N}"
+      ;;
+    revise)
+      [ -n "$comments" ] || die "usage: smx ai revise <task> \"<what to change>\""
+      session=$(jq -r .session <<<"$task")
+      server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
+        -d "$(jq -cn --arg t "Review of your work (frozen at $(jq -r '.rounds | last | .candidate[0:12]' <<<"$task")), from the person reviewing it: $comments" '{text: $t}')" \
+        "$(server_url)/api/session/$session/prompt" >/dev/null || die "couldn't send it to session $session"
+      task=$(jq -c --argjson now "$(now_ms)" --arg c "$comments" \
+        '.state = "revising" | .updated = $now | .rounds[-1].revision = {comments: $c, at: $now}' <<<"$task")
+      save_task "$task"
+      echo "${G}✓${N} Sent back to its session, to revise: $(jq -r .title <<<"$task")"
+      ;;
+    defer)
+      task=$(jq -c --argjson now "$(now_ms)" '.state = "deferred" | .updated = $now' <<<"$task")
+      save_task "$task"
+      echo "${D}Deferred: $(jq -r .title <<<"$task")${N}"
+      ;;
+  esac
+}
+
 # --- allow, deny, allowed -----------------------------------------------------
 
 # Permission requests (JSON lines in and out, as the server has them), with
@@ -689,6 +985,12 @@ case "${1:-}" in
   allow) shift; allow "$@" ;;
   deny) shift; [ "$#" -le 1 ] || die "usage: smx ai deny <request>"; answer deny reject "${1:-}" ;;
   allowed) shift; allowed "$@" ;;
+  review) shift; review "$@" ;;
+  task) shift; task_command "$@" ;;
+  diff) shift; diff_command "$@" ;;
+  accept) shift; [ "$#" -le 1 ] || die "usage: smx ai accept <task>"; decide accept "${1:-}" ;;
+  revise) shift; [ "$#" -le 2 ] || die "usage: smx ai revise <task> \"<what to change>\""; decide revise "${1:-}" "${2:-}" ;;
+  defer) shift; [ "$#" -le 1 ] || die "usage: smx ai defer <task>"; decide defer "${1:-}" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac

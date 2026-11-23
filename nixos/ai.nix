@@ -45,6 +45,7 @@ let
     text = with theme.colors; ''
       opencode=${lib.getExe opencode}
       normalize=${../ai/normalize.jq}
+      hotspots_filter=${../ai/hotspots.jq}
       color_accent="${theme.accent}" color_dim="${base03}"
       color_red="${base08}" color_green="${base0B}" color_yellow="${base0A}"
     '' + builtins.readFile ../ai/smx-ai.sh;
