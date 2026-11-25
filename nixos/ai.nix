@@ -20,6 +20,7 @@ let
       options = {
         inherit (cfg.server) unsetEnvironment;
         sandbox = if cfg.sandbox.enable then lib.getExe smx-ai-sandbox else null;
+        smxAi = lib.getExe smx-ai;
       };
     }];
   });
@@ -47,6 +48,7 @@ let
       normalize=${../ai/normalize.jq}
       hotspots_filter=${../ai/hotspots.jq}
       history_filter=${../ai/history.jq}
+      decisions_filter=${../ai/decisions.jq}
       sandbox=${if cfg.sandbox.enable then lib.getExe smx-ai-sandbox else ""}
       color_accent="${theme.accent}" color_dim="${base03}"
       color_red="${base08}" color_green="${base0B}" color_yellow="${base0A}"

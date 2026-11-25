@@ -1,0 +1,24 @@
+{
+  "project": "app",
+  "thread": "ses_a",
+  "entries": [
+    {"id": "d01", "time": 1000, "kind": "constraint", "scope": "you", "text": "No AI attribution in commits", "by": "you"},
+    {"id": "d02", "time": 1100, "kind": "direction", "scope": "project", "project": "app", "text": "A small, fast CLI for notes", "by": "you"},
+    {"id": "d03", "time": 1200, "kind": "decision", "scope": "project", "project": "app", "text": "Store notes as plain files", "why": "greppable", "by": "you"},
+    {"id": "d04", "time": 1300, "kind": "decision", "scope": "project", "project": "app", "text": "Store notes in SQLite", "why": "search is the main use", "by": "you", "ref": "d03"},
+    {"id": "d05", "time": 1400, "kind": "decision", "scope": "thread", "project": "app", "thread": "ses_a", "text": "Use clap for arguments", "by": "agent", "session": "ses_a"},
+    {"id": "d06", "time": 1500, "kind": "decision", "scope": "thread", "project": "app", "thread": "ses_a", "text": "Keep a single binary", "by": "agent", "session": "ses_a"},
+    {"id": "d07", "time": 1600, "kind": "confirm", "ref": "d06", "by": "you"},
+    {"id": "d08", "time": 1700, "kind": "decision", "scope": "thread", "project": "app", "thread": "ses_b", "text": "Ship a TUI", "by": "you"},
+    {"id": "d09", "time": 1800, "kind": "decision", "scope": "project", "project": "other", "text": "Not this project's", "by": "you"},
+    {"id": "d10", "time": 1900, "kind": "constraint", "scope": "project", "project": "app", "text": "No network access", "by": "you", "check": "! grep -rq reqwest Cargo.toml"},
+    {"id": "d11", "time": 2000, "kind": "withdraw", "ref": "d10", "why": "sync is wanted after all", "by": "you"},
+    {"id": "d12", "time": 2100, "kind": "decision", "scope": "project", "project": "app", "text": "Sync over WebDAV", "by": "you", "answers": "b01"},
+    {"id": "d13", "time": 2200, "kind": "open", "scope": "project", "project": "app", "text": "Which sync conflicts to resolve automatically: wait for real conflicts", "by": "you", "ref": "d12"}
+  ],
+  "briefs": [
+    {"id": "b01", "time": 2050, "session": "ses_a", "scope": "thread", "project": "app", "thread": "ses_a", "question": "How should notes sync?", "options": [{"text": "WebDAV"}, {"text": "git"}], "pick": 0},
+    {"id": "b02", "time": 2300, "session": "ses_a", "scope": "thread", "project": "app", "thread": "ses_a", "question": "Should deleted notes go to a trash folder?", "options": [{"text": "Yes, for 30 days"}, {"text": "No, delete at once"}], "pick": 0, "serves": "d02"},
+    {"id": "b03", "time": 2400, "session": "ses_b", "scope": "thread", "project": "app", "thread": "ses_b", "question": "Another thread's", "options": [], "pick": null}
+  ]
+}
