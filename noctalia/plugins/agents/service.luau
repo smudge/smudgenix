@@ -1,12 +1,15 @@
 --!nonstrict
 -- Follows `smx ai watch`, publishing what agents are doing ("agents": the
--- server's state, its sessions, subagents' included, and smx ai's tasks) for
+-- server's state, its sessions, subagents' included, smx ai's tasks, and the
+-- decision log: what stands, and what agents asked you) for
 -- the widget and panel, and saying so when one needs you or fails, unless
 -- you're looking at it (its TUI's window is focused). Finishing isn't urgent:
 -- it waits in the overlay, to review.
 
 local sessions = {} -- by id
 local tasks = {} -- smx ai's, newest first
+local decisions = { current = {}, briefs = {} } -- what stands, and what agents asked you (smx ai log)
+local asked = nil -- the questions told about, by id (nil: none yet seen)
 local server = "stopped"
 
 local function publish()
@@ -15,7 +18,7 @@ local function publish()
     table.insert(list, session)
   end
   table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
-  noctalia.state.set("agents", { server = server, sessions = list, tasks = tasks })
+  noctalia.state.set("agents", { server = server, sessions = list, tasks = tasks, decisions = decisions })
 end
 
 -- The focused window's process, from niri's events (nil if none, or not niri).
@@ -172,6 +175,20 @@ local function onLine(line)
     sessions[event.id] = event
   elseif event.type == "tasks" then
     tasks = event.tasks or {}
+  elseif event.type == "decisions" then
+    decisions = { current = event.current or {}, briefs = event.briefs or {} }
+    -- (A new question is news: it waits on you. Not those there at first.)
+    local seen = {}
+    for _, brief in decisions.briefs do
+      seen[brief.id] = true
+      if asked and not asked[brief.id] and noctalia.getConfig("notify") ~= false then
+        local session = sessions[brief.thread] or sessions[brief.session]
+        if not (session and lookingAt(session)) then
+          review(noctalia.notify, "To decide: " .. (session and title(session) or brief.project or "an agent"), brief.question, brief.thread)
+        end
+      end
+    end
+    asked = seen
   elseif event.type == "removed" then
     sessions[event.id] = nil
   elseif event.type == "server" then

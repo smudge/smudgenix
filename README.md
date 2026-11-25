@@ -104,6 +104,22 @@ terminal. Closing a thread archives its session (nothing's deleted), and
 which project, how they ended (their review's outcome) and what they cost,
 subagents included (`--days`, `--since`, `--project`, `--json`).
 
+What you decide goes in a decision log: one line each, like a changelog, kept
+privately in `~/.local/share/smudgenix/decisions.jsonl`. A line is a
+direction (where the work is going), a constraint (a must), a decision, or
+something left open on purpose; it's yours (all your projects), a project's,
+or a thread's. `smx ai decide "<line>" [--why "<why>"]` adds one, for the
+project you're in by default. Nothing's ever edited: `--supersedes <id>`,
+`smx ai reopen`, `confirm` and `withdraw` add lines too, and `smx ai log`
+shows it all, newest first (`--current`: only what stands now). Every agent
+gets what stands in its project and thread, and is told to work within it.
+When a choice is a judgment call, it asks you instead of guessing, with
+options and its pick, and waits. A small, reversible call it makes and
+records as provisional, for you to confirm or overturn. Both wait in Mod+A,
+under To decide, with what already stands there. You answer with a line of
+your own (an option's, edited, or yours) and why, and the agent carries on
+from it.
+
 When an agent asks permission, its notification opens Mod+A on it (so one
 appearing as you type can't answer anything, and one you missed is a Mod+A
 away), which shows the request as it is (the command, or the files, and

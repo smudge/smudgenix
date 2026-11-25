@@ -3,6 +3,11 @@
 -- project (the focused window's, at first; Tab for the next, or all), by
 -- whose turn it is:
 --
+-- - To decide: what agents asked you, and their provisional calls (from the
+--   decision log, smx ai log). Enter opens one with what you need to decide
+--   it: its options and the agent's pick, and what already stands there.
+--   Take an option (1–4) or write your own (w), then why, or leave it open
+--   (o); an agent's call you confirm (c), replace (w) or withdraw (x).
 -- - Your turn: it needs you (a permission, a question), or it's back: work
 --   to review (Enter opens the review: its files, flagged first, each to its
 --   diff), an answer, or a failure.
@@ -32,6 +37,8 @@ local reviewFiles = {} -- the open review's files, in order
 local problem = nil -- the last `smx ai` failure, shown until the next key
 local here = nil -- the focused window's folder, when the overlay opened (smx ai context)
 local submitted = 0 -- when something was last sent (so one Enter can't also open a thread)
+local deciding = nil -- what's open to decide: { brief } or { line }, by id
+local writing = nil -- your line, being written: { stage = "line" | "why", kind, text, why, initial, key }
 
 -- --- Helpers -----------------------------------------------------------------
 
@@ -91,6 +98,55 @@ local function lastCheck(task)
   return check, "running"
 end
 
+-- --- Decisions ---------------------------------------------------------------
+
+-- What's yours to decide, in a project (or all): what agents asked you, then
+-- their provisional calls, to confirm or overturn. Newest first.
+local function toDecide(agents, project)
+  local d = agents.decisions or {}
+  local items = {}
+  for _, brief in d.briefs or {} do
+    if not project or brief.project == project then table.insert(items, { brief = brief }) end
+  end
+  table.sort(items, function(a, b) return (a.brief.time or 0) > (b.brief.time or 0) end)
+  local calls = {}
+  for _, line in d.current or {} do
+    if line.provisional and (not project or line.project == project) then table.insert(calls, { line = line }) end
+  end
+  table.sort(calls, function(a, b) return (a.line.time or 0) > (b.line.time or 0) end)
+  for _, item in calls do table.insert(items, item) end
+  return items
+end
+
+-- The questions waiting on each thread.
+local function asking(agents)
+  local byThread = {}
+  for _, brief in (agents.decisions or {}).briefs or {} do
+    byThread[brief.thread] = byThread[brief.thread] or {}
+    table.insert(byThread[brief.thread], brief)
+  end
+  return byThread
+end
+
+-- What stands where a question is (yours, its project's, its thread's): the
+-- context to decide it in.
+local function standing(agents, project, thread)
+  local lines = {}
+  for _, line in (agents.decisions or {}).current or {} do
+    if line.scope == "you" or (line.project == project and (line.scope == "project" or line.thread == thread)) then
+      table.insert(lines, line)
+    end
+  end
+  return lines
+end
+
+local function sessionById(agents, id)
+  for _, session in agents.sessions or {} do
+    if session.id == id then return session end
+  end
+  return nil
+end
+
 -- --- Threads -----------------------------------------------------------------
 
 -- Your threads (top-level sessions), each with its subagents and its open
@@ -134,7 +190,10 @@ end
 
 -- Whose turn a thread is, and what that means: "you" (needs you, or back),
 -- "away" (at work), or "parked"; with a word on it.
-local function turn(thread, children, task)
+local function turn(thread, children, task, questions)
+  if questions and #questions > 0 then
+    return "you", 0, #questions == 1 and "asks you to decide" or `asks you to decide {#questions} things`
+  end
   if needsYou(thread) or anyChild(thread.id, children, needsYou) then
     local asking = needsYou(thread) and thread or nil
     return "you", 0, asking and asking.state == "needs-input" and "asks you" or "needs your permission"
@@ -160,7 +219,8 @@ local function turn(thread, children, task)
   return "parked", 0, task and task.state == "deferred" and "parked, with work to review" or "parked"
 end
 
-local function glyphFor(thread, where, task)
+local function glyphFor(thread, where, task, questions)
+  if questions and #questions > 0 then return "help-circle", "tertiary" end
   if where == "away" then return "loader-2", "primary" end
   if needsYou(thread) then return "alert-triangle", "tertiary" end
   if where == "you" and task and task.state == "in-review" then return "git-pull-request", "secondary" end
@@ -270,6 +330,8 @@ local function hints(entry)
     return "a accept and close  ·  x discard the review and close  ·  any other key: don't"
   elseif entry and entry.parked then
     return "Enter or → show parked  ·  n new thread  ·  Tab project"
+  elseif entry and entry.decide then
+    return "Enter decide it  ·  n new thread  ·  Tab project"
   elseif asks(entry) then
     return "a allow  ·  Shift+A always  ·  d deny  ·  Enter open  ·  r reply  ·  n new"
   elseif entry and entry.thread then
@@ -278,11 +340,11 @@ local function hints(entry)
   return "n new thread  ·  Tab project  ·  Esc close"
 end
 
-local function threadRow(entry, index, children, tasks)
+local function threadRow(entry, index, children, tasks, questions)
   local thread = entry.thread
   local task = tasks[thread.id]
-  local where, _, says = turn(thread, children, task)
-  local glyph, color = glyphFor(thread, where, task)
+  local where, _, says = turn(thread, children, task, questions[thread.id])
+  local glyph, color = glyphFor(thread, where, task, questions[thread.id])
   local isSelected = index == selected
 
   local details = { says }
@@ -421,10 +483,178 @@ local function renderReview(task)
   }))
 end
 
+-- One thing to decide, in the list: a question, or an agent's call.
+local function decideRow(entry, index, agents)
+  local brief, line = entry.decide.brief, entry.decide.line
+  local from = sessionById(agents, brief and brief.thread or line.thread)
+  local details = { brief and "asks you" or "an agent's call: confirm or overturn" }
+  if from and from.title then table.insert(details, from.title) end
+  if not scope then table.insert(details, (brief or line).project) end
+  local when = ago((brief or line).time)
+  if when then table.insert(details, when) end
+  return ui.row({
+    key = "row-" .. index,
+    gap = 8, padding = 8, radius = 8, align = "center",
+    fill = index == selected and "primary/0.15" or nil,
+    onClick = function()
+      selected = index
+      deciding = entry.decide
+      render()
+    end,
+  }, {
+    ui.glyph({ name = brief and "help-circle" or "circle-dashed", size = 18, color = brief and "tertiary" or "secondary" }),
+    ui.column({ gap = 2, flexGrow = 1 }, {
+      ui.label({ text = brief and brief.question or line.text, maxLines = 2 }),
+      ui.label({ text = table.concat(details, "  ·  "), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }),
+    }),
+  })
+end
+
+-- Writing your line: what it is, then (Enter) why, then (Enter) it's in the
+-- log. (Starting from an option's text, if you took one.)
+local function write(kind, initial)
+  composeCount += 1
+  writing = { stage = "line", kind = kind, text = initial or "", initial = initial or "", key = "write-" .. composeCount }
+  render()
+end
+
+local function advance(text)
+  local w, d = writing, deciding
+  if not w or not d or noctalia.nowMs() - submitted < 300 then return end
+  submitted = noctalia.nowMs()
+  if w.stage == "line" then
+    if not text or text:match("^%s*$") then return end
+    w.text = text
+    composeCount += 1
+    w.stage, w.why, w.key = "why", "", "write-" .. composeCount
+    render()
+    return
+  end
+  local argv = { "smx", "ai", "decide", w.text }
+  if text and not text:match("^%s*$") then
+    table.insert(argv, "--why")
+    table.insert(argv, text)
+  end
+  if w.kind == "open" then
+    table.insert(argv, "--kind")
+    table.insert(argv, "open")
+  end
+  table.insert(argv, d.brief and "--answers" or "--supersedes")
+  table.insert(argv, (d.brief or d.line).id)
+  writing = nil
+  run(argv, function() deciding = nil end)
+end
+
+-- A question (or a call) to decide, with what you need to decide it: its
+-- options and the agent's pick, where it's from, and what already stands
+-- there (direction, constraints, decisions, what's open).
+local function renderDecision(agents, d)
+  local brief, line = d.brief, d.line
+  local item = brief or line
+  local from = sessionById(agents, item.thread)
+  local rows = {}
+  local where = { item.project }
+  if from and from.title then table.insert(where, "from " .. from.title) end
+  local when = ago(item.time)
+  if when then table.insert(where, when) end
+  table.insert(rows, ui.label({ text = table.concat(where, "  ·  "), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }))
+
+  if brief then
+    for i, option in brief.options or {} do
+      local picked = brief.pick == i - 1
+      table.insert(rows, ui.row({
+        gap = 8, padding = 6, radius = 6, align = "center",
+        fill = picked and "secondary/0.1" or "on_surface/0.04",
+        onClick = function() write("decision", option.text) end,
+      }, {
+        ui.label({ text = tostring(i), fontSize = 12, fontWeight = "bold", color = "on_surface/0.6" }),
+        ui.label({ text = option.text, maxLines = 2, flexGrow = 1 }),
+        picked and ui.label({ text = "its pick", fontSize = 10, color = "secondary" }) or ui.box({ width = 0 }),
+      }))
+    end
+  else
+    table.insert(rows, ui.label({ text = (line.why and ("Why: " .. line.why) or "No why given") .. ". Provisional until you confirm it.",
+      fontSize = 12, color = "on_surface/0.75", maxLines = 3 }))
+  end
+
+  if writing then
+    local placeholder = writing.stage == "why" and "Why, in a few words (Enter: none)"
+      or writing.kind == "open" and "What's left open, and until when"
+      or (line and "Your line instead" or "Your decision, one line")
+    if writing.stage == "why" then
+      table.insert(rows, ui.label({ text = writing.text, fontSize = 12, color = "on_surface", maxLines = 2 }))
+    end
+    table.insert(rows, ui.input({
+      key = writing.key, placeholder = placeholder, focus = true,
+      text = writing.stage == "line" and writing.initial or nil,
+      onChange = function(text) if writing then if writing.stage == "line" then writing.text = text else writing.why = text end end end,
+      onSubmit = function(text) advance(text) end,
+    }))
+  end
+
+  -- What stands there.
+  local stands = standing(agents, item.project, item.thread)
+  local titles = { direction = "Direction", constraint = "Constraints", decision = "Decisions", open = "Open, on purpose" }
+  for _, kind in { "direction", "constraint", "decision", "open" } do
+    local these = {}
+    for _, l in stands do
+      if l.kind == kind and l.id ~= item.id then table.insert(these, l) end
+    end
+    if #these > 0 then
+      table.insert(rows, heading(titles[kind] .. (kind == "direction" and "" or ` in {item.project}`)))
+      table.sort(these, function(a, b) return (a.time or 0) > (b.time or 0) end)
+      for i, l in these do
+        if i > 6 then
+          table.insert(rows, ui.label({ text = `and {#these - 6} more (smx ai log --current)`, fontSize = 11, color = "on_surface/0.5" }))
+          break
+        end
+        table.insert(rows, ui.label({ text = l.text .. (l.why and (": " .. l.why) or "") .. (l.provisional and "  (provisional)" or ""),
+          fontSize = 12, color = "on_surface/0.75", maxLines = 2 }))
+      end
+    end
+  end
+  if #stands == 0 then
+    table.insert(rows, ui.label({ text = `Nothing stands in {item.project} yet: no direction or constraints to go by.`, fontSize = 12, color = "on_surface/0.5" }))
+  end
+
+  local keys = writing and (writing.stage == "line" and "Enter next: why  ·  Esc close" or "Enter decide  ·  Esc close")
+    or brief and "1–4 take an option (and edit it)  ·  w write your own  ·  o leave it open  ·  ← back"
+    or "c confirm  ·  w replace it with yours  ·  x withdraw  ·  ← back"
+  panel.render(ui.column({ padding = 14, gap = 6 }, {
+    ui.row({ gap = 8, align = "center" }, {
+      ui.row({ onClick = function() deciding, writing = nil, nil; render() end }, { ui.glyph({ name = "chevron-left", size = 16, color = "on_surface/0.6" }) }),
+      ui.label({ text = brief and brief.question or line.text, fontSize = 15, fontWeight = "bold", maxLines = 3, flexGrow = 1 }),
+    }),
+    problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
+    ui.scroll({ flexGrow = 1, gap = 4 }, rows),
+    ui.label({ text = keys, fontSize = 11, color = "on_surface/0.5" }),
+  }))
+end
+
+-- (Still there? Answered or confirmed elsewhere, it's gone.)
+local function stillToDecide(agents, d)
+  for _, item in toDecide(agents, nil) do
+    if (d.brief and item.brief and item.brief.id == d.brief.id) or (d.line and item.line and item.line.id == d.line.id) then
+      return item
+    end
+  end
+  return nil
+end
+
 function render()
   if not open then return end
   local agents = noctalia.state.get("agents") or { server = "stopped", sessions = {} }
   local list, children, tasks, projects = threads(agents)
+  local questions = asking(agents)
+
+  if deciding then
+    local d = stillToDecide(agents, deciding)
+    if d then
+      renderDecision(agents, d)
+      return
+    end
+    deciding, writing = nil, nil
+  end
 
   if reviewing then
     for _, task in agents.tasks or {} do
@@ -441,7 +671,7 @@ function render()
   local order = {}
   for _, thread in list do
     if not scope or thread.project == scope then
-      local where, rank = turn(thread, children, tasks[thread.id])
+      local where, rank = turn(thread, children, tasks[thread.id], questions[thread.id])
       order[thread.id] = rank
       table.insert(where == "you" and yours or where == "away" and away or parked, thread)
     end
@@ -457,7 +687,7 @@ function render()
   local function add(thread, depth, parent)
     table.insert(shown, { thread = thread, depth = depth, parent = parent })
     local index = #shown
-    table.insert(rows, threadRow(shown[index], index, children, tasks))
+    table.insert(rows, threadRow(shown[index], index, children, tasks, questions))
     local showKids = expanded[thread.id]
     if showKids == nil then showKids = anyChild(thread.id, children, needsYou) end
     if showKids then
@@ -474,6 +704,15 @@ function render()
 
   if agents.server == "down" then
     table.insert(rows, ui.label({ text = "OpenCode's server isn't reachable: see smx ai doctor.", color = "error" }))
+  end
+  -- First, what's yours to decide.
+  local decide = toDecide(agents, scope)
+  if #decide > 0 then
+    table.insert(rows, heading("To decide"))
+    for _, item in decide do
+      table.insert(shown, { decide = item })
+      table.insert(rows, decideRow(shown[#shown], #shown, agents))
+    end
   end
   section("Your turn", yours)
   section("Away", away)
@@ -494,7 +733,7 @@ function render()
       }))
     end
   end
-  if #yours + #away + #parked == 0 then
+  if #yours + #away + #parked + #decide == 0 then
     table.insert(rows, ui.label({ text = scope and `No threads in {scope}. n starts one.` or "No threads. n starts one.", color = "on_surface/0.6" }))
   end
   selected = math.clamp(selected, 1, math.max(1, #shown))
@@ -548,6 +787,7 @@ function onOpen(context)
   open = true
   selected = 1
   reviewing, composing, confirming, problem, parkedOpen = nil, nil, nil, nil, false
+  deciding, writing = nil, nil
   local agents = noctalia.state.get("agents") or {}
   if type(context) == "string" and context ~= "" then
     for _, session in agents.sessions or {} do
@@ -576,7 +816,7 @@ end
 
 function onClose()
   open = false
-  composing, confirming = nil, nil
+  composing, confirming, writing = nil, nil, nil
   panel.setNeedsFrameTick(false)
 end
 
@@ -602,6 +842,44 @@ function onKey(chord, pressed)
       composing = nil
       render()
     end
+    return
+  end
+
+  -- Writing your line (or why): Enter goes on. (Printable keys go to the
+  -- field.)
+  if writing then
+    if chord == "Return" then
+      advance(writing.stage == "line" and writing.text or writing.why)
+    elseif chord == "Up" or chord == "Down" or chord == "Tab" then
+      writing = nil
+      render()
+    end
+    return
+  end
+
+  -- Deciding: take an option, write your own, leave it open; or, for an
+  -- agent's call, confirm, replace or withdraw it.
+  if deciding then
+    local d = stillToDecide(agents, deciding)
+    if not d then deciding = nil; render(); return end
+    local n = tonumber(chord)
+    if chord == "Left" or chord == "h" then
+      deciding = nil
+    elseif d.brief and n and d.brief.options[n] then
+      write("decision", d.brief.options[n].text)
+      return
+    elseif chord == "w" then
+      write("decision", nil)
+      return
+    elseif d.brief and chord == "o" then
+      write("open", nil)
+      return
+    elseif d.line and chord == "c" then
+      run({ "smx", "ai", "confirm", d.line.id }, function() deciding = nil end)
+    elseif d.line and chord == "x" then
+      run({ "smx", "ai", "withdraw", d.line.id }, function() deciding = nil end)
+    end
+    render()
     return
   end
 
@@ -693,6 +971,8 @@ function onKey(chord, pressed)
     return
   elseif entry and entry.parked and (chord == "Return" or chord == "Right" or chord == "l") then
     parkedOpen = true
+  elseif entry and entry.decide and (chord == "Return" or chord == "Right" or chord == "l") then
+    deciding = entry.decide
   elseif not thread then
     -- (Nothing selected to act on.)
   elseif (chord == "a" or chord == "Shift+A" or chord == "Shift+a" or chord == "d") and asks(entry) then
