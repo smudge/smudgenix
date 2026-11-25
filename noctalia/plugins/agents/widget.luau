@@ -3,6 +3,11 @@
 -- first, and greyed out when nothing needs you, there's nothing to review and
 -- none is at work. Click: the overlay (as Mod+A); right-click: check on them
 -- (smx ai doctor).
+--
+-- While Super is held, it shows its shortcut instead (the leader key sends
+-- "hints" "on", then "off": see nixos/desktop/leader.sh).
+
+local hints = false
 
 local function count(list, keep)
   local n = 0
@@ -56,10 +61,25 @@ local function render(agents)
     barWidget.setText("")
     barWidget.setTooltip(agents.server == "up" and "Agents: nothing needs you (click to see them)" or "Agents: none (OpenCode's server isn't running; click to see them)")
   end
+
+  local keys = noctalia.getConfig("keys") or ""
+  if hints and keys ~= "" then
+    barWidget.setColor("primary")
+    barWidget.setText(keys)
+  else
+    barWidget.setColor("on_surface")
+  end
 end
 
 noctalia.state.watch("agents", render)
 render()
+
+function onIpc(event, payload)
+  if event == "hints" then
+    hints = payload == "on"
+    render()
+  end
+end
 
 function onClick()
   noctalia.togglePanel("smudgenix/agents:sessions")

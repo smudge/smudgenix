@@ -21,6 +21,13 @@ entry = "service.luau"
 id    = "agents"
 entry = "widget.luau"
 
+  [[widget.setting]]
+  key             = "keys"
+  type            = "string"
+  label_key       = "settings.keys.label"
+  description_key = "settings.keys.description"
+  default         = ""
+
 [[panel]]
 id               = "sessions"
 entry            = "panel.luau"

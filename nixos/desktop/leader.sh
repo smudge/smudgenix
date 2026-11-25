@@ -4,7 +4,8 @@
 # ./leader-events.awk, on $socket:
 #
 #   - Tapped alone: opens $tap (a Noctalia panel).
-#   - Held alone for $peek_after ms: the bar peeks out, until it's released.
+#   - Held alone for $peek_after ms: the bar peeks out, its buttons showing
+#     their shortcuts ($hinted, Noctalia plugin widgets), until it's released.
 #   - Still held at $overlay_after ms: its shortcuts (a Noctalia panel,
 #     ../../noctalia/plugins/shortcuts), until it's released. (Not if a panel's open already.)
 
@@ -20,7 +21,14 @@ state() {
     || echo "true true true"
 }
 
-held="" other="" peeked="" shown="" hide=""
+# Tells the bar's buttons to show their shortcuts, or not.
+hints() {
+  for widget in "${hinted[@]}"; do
+    noctalia msg plugin "$widget" all hints "$1" >/dev/null 2>&1 || true
+  done
+}
+
+held="" other="" peeked="" shown="" hide="" hinting=""
 
 deadline() {
   if [ -z "$peeked" ]; then
@@ -28,9 +36,13 @@ deadline() {
     read -r visible _ locked <<<"$(state)"
     if [ "$locked" = true ]; then
       other=1 # (Nothing more until it's released.)
-    elif [ "$visible" != true ]; then
-      hide=1
-      noctalia msg bar-show >/dev/null
+    else
+      if [ "$visible" != true ]; then
+        hide=1
+        noctalia msg bar-show >/dev/null
+      fi
+      hinting=1
+      hints on
     fi
   else
     read -r _ panel _ <<<"$(state)"
@@ -43,6 +55,7 @@ deadline() {
 }
 
 released() {
+  [ -z "$hinting" ] || hints off
   [ "$shown" != 1 ] || noctalia msg panel-close "$sheet" >/dev/null
   if [ -z "$other" ] && [ -z "$peeked" ]; then
     [ -n "$tap" ] || return 0
@@ -76,7 +89,7 @@ while :; do
 
   if read -r -u 3 "${wait_for[@]}" event; then
     case "$event" in
-      down) clock; start=$now held=1 other="" peeked="" shown="" hide="" ;;
+      down) clock; start=$now held=1 other="" peeked="" shown="" hide="" hinting="" ;;
       other) other=1 ;;
       up) [ -z "$held" ] || released; held="" ;;
     esac

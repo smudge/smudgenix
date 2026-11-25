@@ -3,6 +3,10 @@
     "notify": {
       "label": "Notifications",
       "description": "Tell me when an agent needs me or finishes (unless I'm looking at it)"
+    },
+    "keys": {
+      "label": "Shortcut",
+      "description": "Shown while Super is held (smudgenix sets it from the keybinds)"
     }
   }
 }

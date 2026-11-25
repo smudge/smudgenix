@@ -14,6 +14,7 @@ let
   inherit (config.smudgenix) desktop;
   cfg = desktop.leader;
   socket = "/run/smudgenix-leader.sock";
+  shortcuts = import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; inherit (cfg) onBar; };
 
   leader = pkgs.writeShellApplication {
     name = "smudgenix-leader";
@@ -23,6 +24,7 @@ let
       peek_after=${toString cfg.peekAfter}
       overlay_after=${toString cfg.overlayAfter}
       tap=${lib.escapeShellArg (if cfg.tap == null then "" else cfg.tap)}
+      hinted=(${lib.escapeShellArgs cfg.hinted})
     '' + builtins.readFile ./leader.sh;
   };
 in
@@ -47,6 +49,24 @@ in
       description = ''
         Milliseconds Super is held alone before the bar peeks out (until
         it's released). Released sooner, it's a tap.
+      '';
+    };
+    onBar = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      internal = true;
+      description = ''
+        Panels the bar has a button for (from ./noctalia.nix), whose
+        shortcuts show there, not on the sheet.
+      '';
+    };
+    hinted = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      internal = true;
+      description = ''
+        Noctalia plugin widgets (as `author/plugin:entry`) that show their
+        shortcut while Super is held, on a "hints" event.
       '';
     };
     overlayAfter = lib.mkOption {
@@ -118,7 +138,7 @@ in
 
     # The shortcuts sheet, for ../../noctalia/plugins/shortcuts.
     environment.etc."smudgenix/shortcuts.json".text =
-      builtins.toJSON (import ./shortcuts.nix { inherit lib; } desktop.binds);
+      builtins.toJSON shortcuts.sheet;
 
     systemd.user.services.smudgenix-leader = {
       description = "Super on its own: tapped, or held";

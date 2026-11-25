@@ -1,10 +1,35 @@
 id          = "smudgenix/shortcuts"
 name        = "Shortcuts"
-version     = "0.1.0"
+version     = "0.2.0"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "keyboard"
-description = "Super's shortcuts, while you hold it (smudgenix.desktop.leader)."
+description = "Super's shortcuts, while you hold it (smudgenix.desktop.leader): in a panel, and on the bar's buttons."
+
+# A button that opens something (its `actions`), and shows its shortcut while
+# Super is held.
+[[widget]]
+id    = "button"
+entry = "button.luau"
+
+  [[widget.setting]]
+  key       = "glyph"
+  type      = "glyph"
+  label_key = "settings.glyph.label"
+  default   = "search"
+
+  [[widget.setting]]
+  key             = "keys"
+  type            = "string"
+  label_key       = "settings.keys.label"
+  description_key = "settings.keys.description"
+  default         = ""
+
+  [[widget.setting]]
+  key       = "tooltip"
+  type      = "string"
+  label_key = "settings.tooltip.label"
+  default   = ""
 
 # Never takes the keyboard, so the shortcut you press still goes to niri, and
 # typing to the window you're in.
