@@ -143,14 +143,23 @@ its stack, bottom first: each layer's purpose and size, and the selected
 one's diff and the places in it worth a closer look (dependencies, deleted or
 skipped tests, migrations, CI, security-sensitive files and lines, large
 changes), right there (Shift+J/K scrolls it; Enter opens it
-all in a terminal). `a` lands it and every layer below it on your trunk (a
-fast-forward, in your checkout if it's on it: your uncommitted work stays).
-`r` tells the agent what to change in it; the layers above restack on the
-change. A layer with an agent's call still provisional in it can't land until
-you settle the call. `smx ai stack <session>`, `stack diff <session> <layer>`
-and `land <session> <layer>` do the same from a terminal. Closing a thread
-lands its layers (`--accept`) or sets them aside (`--discard`: still in jj's
-history, never reverted), and removes its workspace.
+all in a terminal). `a` approves it and every layer below it: it never
+touches your trunk, but publishes them for your forge's own review, each to a
+branch of its own on your repository's remote, and a pull request each,
+chained bottom first (on GitHub, through `gh`, linked as a stack where the
+repository has stacks; GitLab through `glab`, Gitea and Forgejo through
+`tea`; elsewhere, just the branches). Your forge merges them, as it would
+anyone's. Only what you approved is pushed, and agents never push. `s` (or
+`smx ai sync <session>`) puts the stack on your trunk as the remote has it now:
+what the forge has merged, squashed or not, drops out, and what you approved
+and has restacked since is published again. `r` tells the agent what to change
+in a layer (approved or not: a changed one waits for you to approve it again);
+the layers above restack on the change. A layer with an agent's call still
+provisional in it can't be approved until you settle the call. `smx ai stack
+<session>`, `stack diff <session> <layer>` and `approve <session> <layer>` do
+the same from a terminal. Closing a thread approves its layers (`--accept`) or
+sets them aside (`--discard`: still in jj's history, never reverted), and
+removes its workspace.
 
 ## smx
 
