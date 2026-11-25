@@ -1,7 +1,7 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
 # first event), `smx.tuis` (opencode's TUIs open now), `smx.tasks`,
-# `smx.decisions` and `smx.server`), smx ai's (v1) out:
+# `smx.decisions`, `smx.stacks` and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
@@ -9,6 +9,7 @@
 #   {"v":1,"type":"server","state":"up"|"stopped"|"down"}
 #   {"v":1,"type":"tasks","tasks":[<task>…]}   (smx ai's; see smx ai task --json)
 #   {"v":1,"type":"decisions","current":[…],"briefs":[…]}   (see smx ai log --json)
+#   {"v":1,"type":"stacks","stacks":[…]}   (threads' stacks; see smx ai stack --json)
 #
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
@@ -115,6 +116,8 @@ foreach inputs as $e ({sessions: {}, tuis: [], emit: []};
       .emit = [{v: 1, type: "tasks", tasks: $e.tasks}]
     elif $e.type == "smx.decisions" then
       .emit = [{v: 1, type: "decisions", current: $e.current, briefs: $e.briefs}]
+    elif $e.type == "smx.stacks" then
+      .emit = [{v: 1, type: "stacks", stacks: $e.stacks}]
     elif $e.type == "smx.server" then
       .emit = [{v: 1, type: "server", state: $e.state}]
       | if $e.state != "up" then .sessions = {} else . end

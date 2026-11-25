@@ -286,15 +286,17 @@ tui_changes() {
   done
 }
 
-# watch's tasks and decisions, while it runs: whenever they change (or a
-# review goes stale), and at first (with up to 200 of each task's files).
+# watch's tasks, decisions and stacks, while it runs: whenever they change
+# (or a review goes stale), and at first (with up to 200 of each task's files).
 store_changes() {
-  local now last="" decided last_decided="" watcher=$$
+  local now last="" decided last_decided="" stacked last_stacked="" watcher=$$
   while [ -e "/proc/$watcher" ]; do
     now=$(task_command --json 2>/dev/null | jq -c '{type: "smx.tasks", tasks: [.tasks[] | .review |= (if . then .files |= .[:200] else . end)]}') || now=""
     [ -z "$now" ] || [ "$now" = "$last" ] || { echo "$now"; last=$now; }
     decided=$(fold 2>/dev/null | jq -c '{type: "smx.decisions", current, briefs}') || decided=""
     [ -z "$decided" ] || [ "$decided" = "$last_decided" ] || { echo "$decided"; last_decided=$decided; }
+    stacked=$(stacks_json 2>/dev/null | jq -c '{type: "smx.stacks", stacks: .}') || stacked=""
+    [ -z "$stacked" ] || [ "$stacked" = "$last_stacked" ] || { echo "$stacked"; last_stacked=$stacked; }
     sleep 5
   done
 }
@@ -1303,13 +1305,13 @@ stack_view() {
   thread=$(thread_json "$1")
   repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
   [ -d "$ws" ] || die "its workspace is gone ($ws)" 4
-  jjr -R "$ws" git import >/dev/null 2>&1 || true
+  jjr -R "$ws" git import --ignore-working-copy >/dev/null 2>&1 || true
   # shellcheck disable=SC2016 # (jj's template)
-  layers=$(jjr -R "$ws" log --no-graph --reversed -r "(::@ ~ ::$trunk)::" \
+  layers=$(jjr -R "$ws" log --ignore-working-copy --no-graph --reversed -r "(::@ ~ ::$trunk)::" \
     -T '"{\"c\":" ++ json(self) ++ ",\"empty\":" ++ json(empty) ++ ",\"conflict\":" ++ json(conflict) ++ ",\"wc\":" ++ json(current_working_copy) ++ "}\n"' 2>/dev/null) \
     || die "couldn't read the stack in $ws"
   accepted=$(jq -c '.accepted // []' <<<"$thread")
-  jq -cs --argjson thread "$thread" --argjson accepted "$accepted" --arg repo "$repo" '
+  jq -cs --argjson thread "$thread" --argjson accepted "$accepted" --arg repo "$repo" --arg dirty "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" '
     map({change: .c.change_id, commit: .c.commit_id, title: (.c.description | split("\n")[0]),
          empty, conflict, working: .wc})
     | (map(select(.working | not)) | to_entries | map(.value + {layer: (.key + 1)})) as $layers
@@ -1317,7 +1319,39 @@ stack_view() {
     | {v: 1, session: $thread.session, project: $thread.project, repo: $repo, trunk: $thread.trunk,
        workspace: $thread.workspace, revising: ($thread.revising // null),
        layers: [$layers[] | . + {state: (if .change | IN($accepted[]) then "accepted" else "to review" end)}],
-       uncommitted: ($wc != null and ($wc.empty | not))}' <<<"$layers"
+       uncommitted: ($dirty != "")}' <<<"$layers"
+}
+
+
+# A layer's files and hotspots (see ./hotspots.jq), from its commit (which
+# never changes, so they're kept).
+layer_stats() {
+  local repo=$1 commit=$2 cache="$stacks_dir/.layers/$2.json" change
+  if [ ! -s "$cache" ]; then
+    mkdir -p "$stacks_dir/.layers"
+    change=$(change_json "$repo" "$commit^" "$commit") || return 1
+    jq -c --slurpfile spots <(jq -c -f "$hotspots_filter" <<<"$change") \
+      '{files: [.files[] | {status, path, added, removed}], hotspots: $spots[0]}' <<<"$change" >"$cache.new" && mv "$cache.new" "$cache"
+  fi
+  cat "$cache"
+}
+
+# Every open thread's stack, its layers with their files and hotspots: what
+# watch publishes.
+stacks_json() {
+  local file session view repo stats
+  for file in "$threads_dir"/*.json; do
+    [ -f "$file" ] || continue
+    session=$(basename "$file" .json)
+    [ "$(jq -r '.closed // empty' "$file")" = "" ] || continue
+    view=$(stack_view "$session" 2>/dev/null) || continue
+    repo=$(jq -r .repo <<<"$view")
+    stats=$(jq -r '.layers[].commit' <<<"$view" | while read -r commit; do
+      layer_stats "$repo" "$commit" | jq -c --arg c "$commit" '{($c): .}'
+    done | jq -cs 'add // {}')
+    jq -c --argjson stats "$stats" '.layers |= map(. + ($stats[.commit] // {files: [], hotspots: []})
+      | . + {added: ([.files[].added] | add // 0), removed: ([.files[].removed] | add // 0)})' <<<"$view"
+  done | jq -cs '.'
 }
 
 # A layer's diff (git's format), by its number or change id.
@@ -1592,6 +1626,30 @@ close_thread() {
       discard) save_task "$(jq -c --argjson now "$(now_ms)" '.state = "discarded" | .updated = $now' <<<"$task")" ;;
       *) die "$(jq -r .title <<<"$task") has work waiting for review: close it with --accept or --discard" ;;
     esac
+  fi
+  # (A stack: its layers land, or are set aside: still in jj's history, never
+  # reverted; its workspace goes.)
+  local thread n
+  if [ -f "$(thread_file "$session")" ] && [ "$(jq -r '.closed // empty' "$(thread_file "$session")")" = "" ]; then
+    thread=$(thread_json "$session")
+    n=$(stack_view "$session" 2>/dev/null | jq '.layers | length') || n=0
+    if [ "$n" -gt 0 ]; then
+      case "$decision" in
+        accept) land_command "$session" "$n" >/dev/null ;;
+        discard) ;;
+        *) die "it has $n layer(s) not landed: close it with --accept (land them all) or --discard (set them aside)" ;;
+      esac
+    fi
+    local repo ws
+    repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
+    # (What it hadn't committed is kept too, as a change of its own.)
+    if [ -d "$ws" ] && [ -n "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" ]; then
+      jjr -R "$ws" describe -m "Not committed when its thread closed" >/dev/null 2>&1 || true
+    fi
+    jjr -R "$(jq -r .jj <<<"$thread")" workspace forget "$(jq -r .name <<<"$thread")" >/dev/null 2>&1 || true
+    git -C "$repo" worktree remove --force "$ws" >/dev/null 2>&1 || rm -rf "$ws"
+    git -C "$repo" worktree prune >/dev/null 2>&1 || true
+    save_thread "$session" "$(jq -c --argjson t "$(now_ms)" --arg d "${decision:-}" '.closed = $t | if $d != "" then .closing = $d else . end' <<<"$thread")"
   fi
   if [ "$(jq -r '.time.archived // empty' <<<"$sess")" != "" ]; then
     echo "${D}Nothing to do: it's closed already.${N}"
