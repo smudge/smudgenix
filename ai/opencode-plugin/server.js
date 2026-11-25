@@ -104,6 +104,54 @@ export default {
           return { content: `Asked (${brief.id}). Stop here and end your turn: the person's answer will come back to you.` };
         },
       });
+      // A thread's stack (smx ai stack): its agent commits and revises layers
+      // through these, never with git or jj itself.
+      editor.add({
+        name: "commit",
+        description:
+          "Commit what you've changed as the next layer of your stack, with its purpose as a short commit title " +
+          "(72 characters at most, no attribution). One purpose per layer, each safe to land on its own. While " +
+          "revising a layer (smudgenix_revise), it goes into that layer instead (purpose optional: it keeps its own).",
+        input: {
+          type: "object",
+          properties: { purpose: { type: "string", description: "A commit title: what the layer is for" } },
+          additionalProperties: false,
+        },
+        options: { namespace: "smudgenix" },
+        execute: async (input, context) => {
+          const { dir, thread } = await where(context.sessionID);
+          const args = ["stack", "commit", "--session", thread];
+          if (input.purpose) args.push(input.purpose);
+          return { content: await run(smxAi, args, dir) };
+        },
+      });
+      editor.add({
+        name: "revise",
+        description:
+          "Start changing a layer of your stack that isn't accepted yet (by its number, or change id): change the " +
+          "files, then smudgenix_commit puts the change into it, and the layers above restack on it.",
+        input: {
+          type: "object",
+          properties: { layer: { type: "string", description: "Its number (from the bottom, 1) or change id" } },
+          required: ["layer"],
+          additionalProperties: false,
+        },
+        options: { namespace: "smudgenix" },
+        execute: async (input, context) => {
+          const { dir, thread } = await where(context.sessionID);
+          return { content: await run(smxAi, ["stack", "revise", "--session", thread, input.layer], dir) };
+        },
+      });
+      editor.add({
+        name: "stack",
+        description: "Show your stack: its layers, bottom first, and whether there are changes not committed yet.",
+        input: { type: "object", properties: {}, additionalProperties: false },
+        options: { namespace: "smudgenix" },
+        execute: async (_input, context) => {
+          const { dir, thread } = await where(context.sessionID);
+          return { content: await run(smxAi, ["stack", thread], dir) };
+        },
+      });
       editor.add({
         name: "decide",
         description:

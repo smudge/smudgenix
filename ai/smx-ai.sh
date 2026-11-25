@@ -51,6 +51,11 @@ Agents (OpenCode), as part of the desktop.
                           stands now, and what agents asked you)
   ask …                   (For agents, through smudgenix's OpenCode plugin:
                           a question for you, waiting in the log)
+  stack <session> [--json] A thread's stack: its layers, bottom first
+  stack diff <session> <layer>
+                          A layer's change
+  land <session> <layer>  Land it, and every layer below it, on your trunk
+  stack commit|revise …   (For agents, through smudgenix's OpenCode plugin)
 
   history [--days <n> | --since <date>] [--project <name>] [--json]
                           Your threads, day by day, closed ones too (by
@@ -595,6 +600,11 @@ review() {
     shift
   done
   [ -n "$session" ] || die "$usage"
+  # (A thread with a stack is reviewed layer by layer: smx ai stack.)
+  if [ -f "$(thread_file "$session")" ]; then
+    [ -z "$auto" ] || return 0
+    die "$session works in a stack: its layers are reviewed one by one (smx ai stack $session)"
+  fi
   [ -n "$(server_url)" ] || die "OpenCode's server isn't running" 3
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
@@ -869,7 +879,7 @@ decide_command() {
       --why) why=${2:-}; shift ;;
       --kind) kind=${2:-}; shift ;;
       --you) scope=you ;;
-      --project) scope=project project=${2:-}; shift ;;
+      --project) project=${2:-}; [ "$scope" = thread ] || scope=project; shift ;;
       --thread) scope=thread thread=${2:-}; shift ;;
       --check) check=${2:-}; shift ;;
       --supersedes) ref=${2:-}; shift ;;
@@ -913,14 +923,22 @@ decide_command() {
   fi
   [ "$scope" != project ] || [ -n "$project" ] || die "$usage"
   [ "$by" != agent ] || [ -n "$session" ] || die "$usage"
+  # (An agent's call belongs to the layer it's working on, in a stack:
+  # landing that layer waits for you to settle it.)
+  local layer="" t repo
+  if [ "$by" = agent ] && [ -n "$thread" ] && [ -f "$(thread_file "$thread")" ]; then
+    t=$(thread_json "$thread") repo=$(jq -r .repo <<<"$t")
+    layer=$(jq -r '.revising // empty' <<<"$t")
+    [ -n "$layer" ] || layer=$(jjr -R "$(jq -r .workspace <<<"$t")" log --no-graph -r @ -T change_id 2>/dev/null) || layer=""
+  fi
 
   local entry
   entry=$(jq -cn --arg kind "$kind" --arg scope "$scope" --arg project "$project" --arg thread "$thread" \
     --arg text "$text" --arg why "$why" --arg by "$by" --arg session "$session" --arg check "$check" \
-    --arg ref "$ref" --arg answers "$answers" '
+    --arg ref "$ref" --arg answers "$answers" --arg layer "$layer" '
     def opt: if . == "" then null else . end;
     {kind: $kind, scope: $scope, project: ($project | opt), thread: ($thread | opt), text: $text, why: ($why | opt),
-     by: $by, session: ($session | opt), check: ($check | opt), ref: ($ref | opt), answers: ($answers | opt)}
+     by: $by, session: ($session | opt), check: ($check | opt), ref: ($ref | opt), answers: ($answers | opt), layer: ($layer | opt)}
     | with_entries(select(.value != null))')
   entry=$(append_entry "$decision_log" d "$entry")
 
@@ -1076,6 +1094,20 @@ agent_context() {
     items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose"),
     (if .briefs == [] then empty else "Asked, waiting on the person (do not decide these yourself):", (.briefs[] | "- \(.question) [\(.id)]"), "" end),
     (if .current == [] then "Nothing is decided yet for this project." else empty end)' <<<"$folded"
+  if [ -n "${2:-}" ] && [ -f "$(thread_file "$2")" ]; then
+    cat <<'EOF'
+
+# Your stack
+
+You work in a workspace of your own: your work becomes a stack of layers (one jj change each) that the person reviews from the bottom, and that land on their trunk as they approve them.
+- Commit each layer with the smudgenix_commit tool, with its purpose as a short commit title (72 characters at most; no attribution, no body). One purpose per layer.
+- Every layer must be safe to land on its own: it builds, its tests pass, nothing half-done (behind a flag if it must be).
+- Put the least controversial layers first (groundwork, refactors, mechanical changes), and the ones that need the person's judgment last, so the rest can land while they think.
+- To change a layer that isn't accepted yet, call smudgenix_revise with it, change the files, then smudgenix_commit: it goes into that layer, and the ones above restack on it.
+- Don't run git commit, git push, git rebase or jj commands that change history: they're refused here. smudgenix_stack shows the stack; git diff and git log work.
+EOF
+    echo; NO_COLOR=1 stack_show "$2" 2>/dev/null || true
+  fi
 }
 
 # --- verify: evidence, not claims ----------------------------------------------
@@ -1202,6 +1234,241 @@ verify() {
   [ "$status" -eq 0 ] || die "the check failed (exit $status, after $took): $command; its log: $log"
 }
 
+# --- stacks: a thread's work, as layers ----------------------------------------
+
+# A thread in a repository works in its own jj workspace (a git worktree too),
+# in smudgenix's store, off your trunk: its work, a stack of layers (one jj
+# change each, each safe to land), that you review from the bottom, and that
+# land on your trunk as you approve them. Your checkout stays yours, and git's:
+# jj's repository is in the store, backed by your repository's git.
+#
+# Agents' commands can't change history (their sandbox has the store and your
+# repository's git read-only); smudgenix's OpenCode plugin commits, revises and
+# shows layers for them (stack commit|revise|show), so its rules are kept.
+stacks_dir="$(dirname "$tasks_dir")/stacks"
+threads_dir="$(dirname "$tasks_dir")/threads"
+
+# jj, quiet, as you (your repository's git identity), never paging.
+jjr() {
+  "$jj" --no-pager --color=never --quiet \
+    --config "user.name=$(git -C "$repo" config user.name 2>/dev/null || echo smx)" \
+    --config "user.email=$(git -C "$repo" config user.email 2>/dev/null || echo smx@localhost)" "$@"
+}
+
+# A repository's trunk: its remote's default branch, else main or master, else
+# the branch it's on.
+trunk_of() {
+  local head
+  if head=$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null); then echo "${head#origin/}"; return; fi
+  for head in main master; do
+    git -C "$1" show-ref --verify --quiet "refs/heads/$head" && { echo "$head"; return; }
+  done
+  git -C "$1" branch --show-current
+}
+
+thread_file() { echo "$threads_dir/$1.json"; }
+thread_json() {
+  [ -f "$(thread_file "$1")" ] || die "$1 has no stack (only threads started in a repository with smx ai new do)" 4
+  cat "$(thread_file "$1")"
+}
+save_thread() {
+  mkdir -p "$threads_dir"
+  jq . <<<"$2" >"$(thread_file "$1").new" && mv "$(thread_file "$1").new" "$(thread_file "$1")"
+}
+
+# A workspace for a new thread in a repository, off its trunk (its jj
+# repository made first, if it's the first): prints {jj, workspace, trunk}.
+stack_create() {
+  local repo=$1 common key jjrepo trunk name ws
+  common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+  key="$(basename "$repo")-$(printf '%s' "$repo" | sha256sum | cut -c1-8)"
+  jjrepo="$stacks_dir/$key/repo"
+  if [ ! -d "$jjrepo/.jj" ]; then
+    mkdir -p "$stacks_dir/$key"
+    jjr git init --git-repo "$common" "$jjrepo" >/dev/null 2>&1 || die "couldn't make a jj repository for $repo"
+  fi
+  trunk=$(trunk_of "$repo")
+  [ -n "$trunk" ] || die "$repo has no branch to work from"
+  jjr -R "$jjrepo" git import >/dev/null 2>&1 || true
+  name="t$(date +%Y%m%d%H%M%S)$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+  ws="$stacks_dir/$key/$name"
+  jjr -R "$jjrepo" workspace add --colocate --name "$name" -r "$(git -C "$repo" rev-parse "refs/heads/$trunk")" "$ws" >/dev/null 2>&1 \
+    || die "couldn't make a workspace for the thread in $stacks_dir/$key"
+  jq -cn --arg j "$jjrepo" --arg w "$ws" --arg t "$trunk" --arg n "$name" '{jj: $j, workspace: $w, trunk: $t, name: $n}'
+}
+
+# A thread's stack: its layers, bottom first, and what's not committed yet.
+stack_view() {
+  local thread repo ws trunk layers accepted
+  thread=$(thread_json "$1")
+  repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
+  [ -d "$ws" ] || die "its workspace is gone ($ws)" 4
+  jjr -R "$ws" git import >/dev/null 2>&1 || true
+  # shellcheck disable=SC2016 # (jj's template)
+  layers=$(jjr -R "$ws" log --no-graph --reversed -r "(::@ ~ ::$trunk)::" \
+    -T '"{\"c\":" ++ json(self) ++ ",\"empty\":" ++ json(empty) ++ ",\"conflict\":" ++ json(conflict) ++ ",\"wc\":" ++ json(current_working_copy) ++ "}\n"' 2>/dev/null) \
+    || die "couldn't read the stack in $ws"
+  accepted=$(jq -c '.accepted // []' <<<"$thread")
+  jq -cs --argjson thread "$thread" --argjson accepted "$accepted" --arg repo "$repo" '
+    map({change: .c.change_id, commit: .c.commit_id, title: (.c.description | split("\n")[0]),
+         empty, conflict, working: .wc})
+    | (map(select(.working | not)) | to_entries | map(.value + {layer: (.key + 1)})) as $layers
+    | (map(select(.working)) | first) as $wc
+    | {v: 1, session: $thread.session, project: $thread.project, repo: $repo, trunk: $thread.trunk,
+       workspace: $thread.workspace, revising: ($thread.revising // null),
+       layers: [$layers[] | . + {state: (if .change | IN($accepted[]) then "accepted" else "to review" end)}],
+       uncommitted: ($wc != null and ($wc.empty | not))}' <<<"$layers"
+}
+
+# A layer's diff (git's format), by its number or change id.
+layer_of() {
+  jq -c --arg l "$2" '.layers[] | select((.layer | tostring) == $l or (.change | startswith($l)))' <<<"$1" | head -1
+}
+
+# stack: a thread's layers (or, with a verb, what smudgenix's OpenCode plugin
+# does for its agent: commit, revise, show).
+stack_command() {
+  local verb=${1:-}
+  case "$verb" in
+    commit) shift; stack_commit "$@" ;;
+    revise) shift; stack_revise "$@" ;;
+    diff) shift; stack_diff "$@" ;;
+    "" | -*) die "usage: smx ai stack <session> [--json] | stack diff <session> <layer>" ;;
+    *) stack_show "$@" ;;
+  esac
+}
+
+stack_show() {
+  local session=$1 json="" view
+  [ "${2:-}" != --json ] || json=1
+  view=$(stack_view "$session")
+  if [ -n "$json" ]; then echo "$view"; return; fi
+  jq -r --arg D "$D" --arg N "$N" --arg G "$G" --arg Y "$Y" --arg R "$R" '
+    "\($D)on \(.trunk), in \(.workspace)\($N)",
+    (if .layers == [] then "\($D)No layers yet.\($N)" else empty end),
+    (.layers[] | "  \(.layer). \(.title | if . == "" then "(no purpose given)" else . end)"
+      + (if .state == "accepted" then "  \($G)accepted\($N)" else "" end)
+      + (if .conflict then "  \($R)conflicted\($N)" else "" end)
+      + (if .empty then "  \($Y)empty\($N)" else "" end)
+      + "  \($D)\(.change[0:8])\($N)"),
+    (if .revising then "\($Y)Revising layer \(.revising[0:8]).\($N)" else empty end),
+    (if .uncommitted then "\($D)And changes not committed yet.\($N)" else empty end)' <<<"$view"
+}
+
+stack_diff() {
+  local session=${1:-} which=${2:-} view layer thread
+  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai stack diff <session> <layer>"
+  view=$(stack_view "$session")
+  layer=$(layer_of "$view" "$which")
+  [ -n "$layer" ] || die "no layer $which" 4
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread")
+  jjr -R "$(jq -r .workspace <<<"$thread")" diff --git --ignore-working-copy -r "$(jq -r .change <<<"$layer")"
+}
+
+# (A purpose is a commit's title: one line, short, and nobody's attribution.)
+purpose_ok() {
+  one_line "the purpose" "$1"
+  [ "${#1}" -le 72 ] || die "the purpose is ${#1} characters: say it in 72 or fewer, as a commit title"
+  ! grep -qiE 'co-authored-by|generated (with|by)|signed-off-by' <<<"$1" || die "no attribution in a purpose: say what the layer is for"
+}
+
+# commit: what the agent's changed, as a new layer on top, with its purpose;
+# or, revising a layer, into it (the layers above restack on it).
+stack_commit() {
+  local session="" purpose="" thread repo ws target top view
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --session) session=${2:-}; shift ;;
+      *) [ -z "$purpose" ] || die "usage: smx ai stack commit --session <session> \"<purpose>\""; purpose=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] || die "usage: smx ai stack commit --session <session> \"<purpose>\""
+  thread=$(thread_json "$session")
+  repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") target=$(jq -r '.revising // empty' <<<"$thread")
+  [ -n "$(jjr -R "$ws" diff --summary -r @)" ] || die "nothing's changed since the last layer: nothing to commit"
+  if [ -n "$target" ]; then
+    # (Into the layer being revised; then back to the top.)
+    if [ -n "$purpose" ]; then purpose_ok "$purpose"; jjr -R "$ws" squash --from @ --into "$target" -m "$purpose" >/dev/null
+    else jjr -R "$ws" squash --from @ --into "$target" -u >/dev/null; fi
+    top=$(jjr -R "$ws" log --no-graph -r "heads((::$target | $target::) ~ ::$(jq -r .trunk <<<"$thread")) ~ @" -T 'change_id ++ "\n"' | head -1)
+    jjr -R "$ws" new "${top:-$target}" >/dev/null
+    save_thread "$session" "$(jq -c 'del(.revising)' <<<"$thread")"
+  else
+    purpose_ok "$purpose"
+    jjr -R "$ws" commit -m "$purpose" >/dev/null
+  fi
+  view=$(stack_view "$session")
+  if [ -n "$target" ]; then
+    jq -c --arg t "$target" '{v: 1, revised: (.layers[] | select(.change == $t)), conflicted: [.layers[] | select(.conflict) | .layer], layers: (.layers | length)}' <<<"$view"
+  else
+    jq -c '{v: 1, committed: .layers[-1], layers: (.layers | length)}' <<<"$view"
+  fi
+}
+
+# revise: start changing a layer (one not accepted yet): what's committed next
+# goes into it.
+stack_revise() {
+  local session="" which="" thread ws view layer
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --session) session=${2:-}; shift ;;
+      *) which=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai stack revise --session <session> <layer>"
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
+  view=$(stack_view "$session")
+  layer=$(layer_of "$view" "$which")
+  [ -n "$layer" ] || die "no layer $which" 4
+  [ "$(jq -r .state <<<"$layer")" != accepted ] || die "layer $which is accepted: only its person changes it now"
+  [ "$(jq -r .uncommitted <<<"$view")" = false ] || die "commit (or undo) what's changed first: it'd go into layer $which"
+  jjr -R "$ws" new "$(jq -r .change <<<"$layer")" >/dev/null
+  save_thread "$session" "$(jq -c --arg c "$(jq -r .change <<<"$layer")" '.revising = $c' <<<"$thread")"
+  jq -c '{v: 1, revising: .}' <<<"$layer"
+}
+
+# land: your trunk, fast-forwarded to a layer (and so every layer below it),
+# in your checkout if it's on it (as git would: your uncommitted work stays);
+# the stack, rebased onto your trunk first if it's moved on.
+land_command() {
+  local session=${1:-} which=${2:-} thread repo ws trunk view layer commit branch head
+  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai land <session> <layer>"
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
+  view=$(stack_view "$session")
+  layer=$(layer_of "$view" "$which")
+  [ -n "$layer" ] || die "no layer $which" 4
+  [ "$(jq -r .conflict <<<"$layer")" = false ] || die "layer $which is conflicted: it can't land"
+  # (Not with its own calls unsettled: approving never decides for you.)
+  local unsettled
+  unsettled=$(fold | jq -r --argjson upto "$(jq -c '[.layers[] | select(.layer <= ($l | tonumber)) | .change]' --arg l "$(jq -r .layer <<<"$layer")" <<<"$view")" \
+    '[.current[] | select(.provisional and .layer != null and (.layer | IN($upto[])))] | map("\(.id) \(.text)") | join("; ")')
+  [ -z "$unsettled" ] || die "these calls made in it are still provisional: $unsettled (confirm, replace or withdraw them first)"
+
+  head=$(git -C "$repo" rev-parse "refs/heads/$trunk")
+  commit=$(jq -r .commit <<<"$layer")
+  if ! git -C "$repo" merge-base --is-ancestor "$head" "$commit"; then
+    # (Your trunk's moved on: the stack goes onto it, then lands if it's clean.)
+    jjr -R "$ws" rebase -s "roots((::@ ~ ::$trunk)::)" -d "$trunk" >/dev/null 2>&1 || die "couldn't rebase the stack onto $trunk"
+    view=$(stack_view "$session")
+    layer=$(layer_of "$view" "$(jq -r .change <<<"$layer")")
+    [ "$(jq -r .conflict <<<"$layer")" = false ] || die "$trunk has moved on, and the stack conflicts with it now: it's rebased; the agent can fix it"
+    commit=$(jq -r .commit <<<"$layer")
+  fi
+  branch=$(git -C "$repo" branch --show-current)
+  if [ "$branch" = "$trunk" ]; then
+    git -C "$repo" merge -q --ff-only "$commit" 2>/dev/null \
+      || die "couldn't fast-forward your $trunk (in $repo) to it: it'd overwrite uncommitted changes there"
+  else
+    git -C "$repo" update-ref "refs/heads/$trunk" "$commit" "$head"
+  fi
+  jjr -R "$ws" git import >/dev/null 2>&1 || true
+  save_thread "$session" "$(jq -c --argjson l "$(jq -c '[.layers[] | select(.layer <= ($n | tonumber)) | {change, commit, title}]' --arg n "$(jq -r .layer <<<"$layer")" <<<"$view")" \
+    --argjson t "$(now_ms)" '.landed = ((.landed // []) + [$l[] | . + {at: $t}])' <<<"$thread")"
+  echo "${G}✓${N} Landed on $trunk, up to: $(jq -r .title <<<"$layer") ${D}(${commit:0:12})${N}"
+}
+
 # --- threads: new, reply, close, park, context --------------------------------
 
 # (A session's task that's still open: not accepted, discarded or closed.)
@@ -1243,10 +1510,26 @@ new_thread() {
   [ -d "$dir" ] || die "no folder $dir" 4
   dir=$(cd "$dir" && pwd)
   need_server
+  # (In a repository: in a workspace of its own, its work a stack of layers;
+  # never editing your checkout.)
+  local repo stack="" body
+  body=$(jq -cn --arg d "$dir" '{location: {directory: $d}}')
+  if repo=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null); then
+    stack=$(stack_create "$repo")
+    body=$(jq -cn --arg d "$(jq -r .workspace <<<"$stack")" --arg r "$repo" \
+      '{location: {directory: $d}, permissions: [{action: "edit", resource: ($r + "/**"), effect: "deny"}]}')
+  fi
   session=$(server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
-    -d "$(jq -cn --arg d "$dir" '{location: {directory: $d}}')" "$(server_url)/api/session" \
+    -d "$body" "$(server_url)/api/session" \
     | jq -r '.data.id // .id // empty') || true
   [ -n "$session" ] || die "couldn't start a session in $dir"
+  if [ -n "$stack" ]; then
+    save_thread "$session" "$(jq -c --arg s "$session" --arg r "$repo" --arg p "$(project_of "$repo")" --argjson t "$(now_ms)" \
+      '{v: 1, session: $s, repo: $r, project: $p, created: $t} + .' <<<"$stack")"
+    dir=$(jq -r .workspace <<<"$stack")
+    # (What you asked for, if it's a line, is where the thread's going.)
+    case "$prompt" in *$'\n'*) ;; *) [ "${#prompt}" -gt 200 ] || decide_command "$prompt" --kind direction --thread "$session" --project "$(project_of "$repo")" --json >/dev/null ;; esac
+  fi
   prompt_session "$session" "$prompt" || die "couldn't give session $session its prompt"
   if [ -n "$json" ]; then
     jq -cn --arg s "$session" --arg d "$dir" '{v: 1, session: $s, dir: $d}'
@@ -1726,6 +2009,8 @@ case "${1:-}" in
   withdraw) shift; withdraw_command "$@" ;;
   log) shift; log_command "$@" ;;
   ask) shift; ask_command "$@" ;;
+  stack) shift; stack_command "$@" ;;
+  land) shift; land_command "$@" ;;
   new) shift; new_thread "$@" ;;
   reply) shift; reply "$@" ;;
   park) shift; park "$@" ;;
