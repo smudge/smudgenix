@@ -225,8 +225,10 @@ Tools:
   search <words>          Find packages
   clean [<days>d]         Delete your generations older than that (14d), and
                           then what nothing uses any more
-  env [<shell> [-f]]      Write a .envrc using a devShell from $(tildify "$devshells"),
-                          or list them
+  env [<tool>[@<ver>]...] [-f]
+                          Write a .envrc for a dev shell from $(tildify "$devshells"),
+                          e.g. "ruby postgres" (Ruby from .ruby-version) or
+                          "ruby@3.3", or list the named ones
   help                    Show this help
 
 Options:
@@ -1051,28 +1053,61 @@ clean() {
 }
 
 list_shells() {
-  nix eval --json "$devshells#devShells.$system" --apply builtins.attrNames | jq -r '.[]'
+  nix eval --json "path:$devshells#devShells.$system" --apply builtins.attrNames | jq -r '.[]'
 }
 
+# `smx env ruby@3.3 postgres` writes `.envrc: use devshell ruby@3.3 postgres`.
+# `use devshell` comes from $devshells/direnvrc (which smudgenix's direnv
+# sources); it reads version files like .ruby-version each time it loads,
+# unless the version is pinned with @.
 env_shell() {
-  shell="${1:-}"
-  if [ -z "$shell" ]; then
-    echo "Available shells in $(tildify "$devshells"):"
+  local force="" specs=() arg err versions
+  for arg in "$@"; do
+    case "$arg" in
+      -f) force=1 ;;
+      -*) die "unknown option: $arg" ;;
+      *) specs+=("$arg") ;;
+    esac
+  done
+  if [ ${#specs[@]} -eq 0 ]; then
+    echo "Shells in $(tildify "$devshells"):"
     list_shells | sed 's/^/  /'
+    echo "Or combine tools and nixpkgs packages, e.g.: smx env ruby@3.3 postgres"
     return
   fi
-  if ! list_shells | grep -qx "$shell"; then
-    say "no devShell '$shell' in $(tildify "$devshells")"
-    die "available: $(list_shells | tr '\n' ' ')"
+  [ -f "$devshells/direnvrc" ] || die "no $(tildify "$devshells")/direnvrc"
+  # shellcheck source=/dev/null
+  source "$devshells/direnvrc"
+  devshell_resolve "${specs[@]}" || exit 1
+
+  # Check it evaluates (it's built when direnv first loads it).
+  if ! err=$(nix eval --raw "path:$devshells#compose.$DEVSHELL_ATTR.drvPath" 2>&1 >/dev/null); then
+    if [[ $err == *"does not provide attribute"* ]]; then
+      say "no such tool, version, or nixpkgs package"
+    else
+      echo "$err" | sed -n 's/.*devshells: /smx: /p' | sort -u >&2
+    fi
+    # The versions there are of each tool asked for, by minor version.
+    for arg in $(printf '%s\n' "${specs[@]%%@*}" | sort -u); do
+      versions=$(nix eval --json "path:$devshells#legacyPackages.$system.compose" --apply \
+        "c: builtins.filter (n: builtins.match \"$arg-[0-9]+(_[0-9]+)?\" n != null) (builtins.attrNames c)" \
+        2>/dev/null | jq -r '.[]' | sed "s/^$arg-//; s/_/./g" | sort -V | tr '\n' ' ')
+      [ -z "$versions" ] || say "$arg versions: $versions"
+    done
+    die "can't make a shell from: ${specs[*]}"
   fi
-  if [ -e .envrc ] && [ "${2:-}" != "-f" ]; then
+
+  if [ -e .envrc ] && [ -z "$force" ]; then
     say ".envrc already exists (use -f to overwrite):"
     sed 's/^/  /' .envrc >&2
     exit 1
   fi
-  echo "use flake $devshells#$shell" > .envrc
+  if command -v git >/dev/null && git ls-files --error-unmatch .envrc >/dev/null 2>&1; then
+    notice "this repo commits .envrc, so this shows up as a change. To keep it local: git rm --cached .envrc"
+  fi
+  echo "use devshell ${specs[*]}" > .envrc
   direnv allow .
-  say "wrote .envrc -> $shell"
+  say "wrote .envrc: use devshell ${specs[*]}  ${D}($DEVSHELL_DESC)${N}"
 }
 
 # --- Commands -------------------------------------------------------------

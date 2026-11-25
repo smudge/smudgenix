@@ -21,6 +21,13 @@
   programs.direnv = {
     enable = true;
     nix-direnv.enable = true;
+    # `use devshell ruby postgres ...` (what `smx env` writes), from your
+    # devshells flake, if you have one.
+    stdlib = ''
+      _devshells=''${SMX_DEVSHELLS:-$HOME/.config/devshells}
+      if [[ -f $_devshells/direnvrc ]]; then source "$_devshells/direnvrc"; fi
+      unset _devshells
+    '';
   };
   programs.git.ignores = [ ".direnv/" ];
 }
