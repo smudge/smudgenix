@@ -9,7 +9,7 @@
 def subagents($kids; $id): [$kids[$id][]? | ., subagents($kids; .id)[]];
 
 .since as $since | .projects as $projects
-| ((.stacks // []) | map({key: .session, value: {landed: (.landed // [] | length), closing: (.closing // null)}})
+| ((.stacks // []) | map({key: .session, value: {merged: (.merged // [] | length), approved: (.published // {} | length), closing: (.closing // null)}})
    | from_entries) as $stacks
 | (.sessions | unique_by(.id)) as $all
 | ($all | map(select(.parentID != null)) | group_by(.parentID)

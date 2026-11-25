@@ -34,7 +34,7 @@ Agents (OpenCode), as part of the desktop.
                           Tell it more
   park <session>          Not now (it stays open)
   close <session> [--accept | --discard]
-                          End it (deciding its review, if it has one)
+                          End it (approving or setting aside its layers)
   context --json          Where you are: the focused window's project
 
   decide "<line>" [--why "<why>"] [--kind direction|constraint|decision|open]
@@ -54,7 +54,12 @@ Agents (OpenCode), as part of the desktop.
   stack <session> [--json] A thread's stack: its layers, bottom first
   stack diff <session> <layer>
                           A layer's change
-  land <session> <layer>  Land it, and every layer below it, on your trunk
+  approve <session> <layer>
+                          Publish it, and every layer below it, to your
+                          forge: a branch and a pull request each, chained
+                          (never on your trunk: the forge merges them)
+  sync <session>          Restack onto the remote's trunk (what it's merged
+                          drops out), publishing what you approved again
   stack commit|revise …   (For agents, through smudgenix's OpenCode plugin)
 
   history [--days <n> | --since <date>] [--project <name>] [--json]
@@ -792,12 +797,12 @@ agent_context() {
 
 # Your stack
 
-You work in a workspace of your own: your work becomes a stack of layers (one jj change each) that the person reviews from the bottom, and that land on their trunk as they approve them.
+You work in a workspace of your own: your work becomes a stack of layers (one jj change each) that the person reviews from the bottom; what they approve goes to their forge as a chain of pull requests, one per layer, for the project's own review.
 - Commit each layer with the smudgenix_commit tool, with its purpose as a short commit title (72 characters at most; no attribution, no body). One purpose per layer.
 - Every layer must be safe to land on its own: it builds, its tests pass, nothing half-done (behind a flag if it must be).
 - Put the least controversial layers first (groundwork, refactors, mechanical changes), and the ones that need the person's judgment last, so the rest can land while they think.
-- To change a layer that isn't accepted yet, call smudgenix_revise with it, change the files, then smudgenix_commit: it goes into that layer, and the ones above restack on it.
-- Don't run git commit, git push, git rebase or jj commands that change history: they're refused here. smudgenix_stack shows the stack; git diff and git log work.
+- To change a layer (approved or not: an approved one is approved again), call smudgenix_revise with it, change the files, then smudgenix_commit: it goes into that layer, and the ones above restack on it.
+- Don't run git commit, git push, git rebase or jj commands that change history: they're refused here. Never push: what's approved is published for you. smudgenix_stack shows the stack; git diff and git log work.
 EOF
     echo; NO_COLOR=1 stack_show "$2" 2>/dev/null || true
   fi
@@ -808,8 +813,9 @@ EOF
 # A thread in a repository works in its own jj workspace (a git worktree too),
 # in smudgenix's store, off your trunk: its work, a stack of layers (one jj
 # change each, each safe to land), that you review from the bottom, and that
-# land on your trunk as you approve them. Your checkout stays yours, and git's:
-# jj's repository is in the store, backed by your repository's git.
+# go to your forge as you approve them (see publishing, below). Your checkout
+# stays yours, and git's: jj's repository is in the store, backed by your
+# repository's git.
 #
 # Agents' commands can't change history (their sandbox has the store and your
 # repository's git read-only); smudgenix's OpenCode plugin commits, revises and
@@ -817,9 +823,11 @@ EOF
 stacks_dir="$store_dir/stacks"
 threads_dir="$store_dir/threads"
 
-# jj, quiet, as you (your repository's git identity), never paging.
+# jj, quiet, as you (your repository's git identity), never paging; with only
+# your trunk and tags immutable (a published layer's still the thread's to
+# revise: you approve it again).
 jjr() {
-  "$jj" --no-pager --color=never --quiet \
+  "$jj" --no-pager --color=never --quiet --config 'revset-aliases."immutable_heads()"="present(trunk()) | tags()"' \
     --config "user.name=$(git -C "$repo" config user.name 2>/dev/null || echo smx)" \
     --config "user.email=$(git -C "$repo" config user.email 2>/dev/null || echo smx@localhost)" "$@"
 }
@@ -833,6 +841,15 @@ trunk_of() {
     git -C "$1" show-ref --verify --quiet "refs/heads/$head" && { echo "$head"; return; }
   done
   git -C "$1" branch --show-current
+}
+
+# A thread's layers, as a revset: what's on top of your trunk (yours, or its
+# remote's), from wherever in the stack its working copy is.
+stack_revset() {
+  local trunk remote
+  trunk=$(jq -r .trunk <<<"$1")
+  remote=$(remote_of "$(jq -r .repo <<<"$1")" "$trunk")
+  echo "(::@ ~ ::(present(\"$trunk\")${remote:+ | present(\"$trunk\"@\"$remote\")}))::"
 }
 
 thread_file() { echo "$threads_dir/$1.json"; }
@@ -868,24 +885,32 @@ stack_create() {
 
 # A thread's stack: its layers, bottom first, and what's not committed yet.
 stack_view() {
-  local thread repo ws trunk layers accepted
+  local thread repo ws trunk layers patches
   thread=$(thread_json "$1")
   repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
   [ -d "$ws" ] || die "its workspace is gone ($ws)" 4
   jjr -R "$ws" git import --ignore-working-copy >/dev/null 2>&1 || true
   # shellcheck disable=SC2016 # (jj's template)
-  layers=$(jjr -R "$ws" log --ignore-working-copy --no-graph --reversed -r "(::@ ~ ::$trunk)::" \
+  layers=$(jjr -R "$ws" log --ignore-working-copy --no-graph --reversed -r "$(stack_revset "$thread")" \
     -T '"{\"c\":" ++ json(self) ++ ",\"empty\":" ++ json(empty) ++ ",\"conflict\":" ++ json(conflict) ++ ",\"wc\":" ++ json(current_working_copy) ++ "}\n"' 2>/dev/null) \
     || die "couldn't read the stack in $ws"
-  accepted=$(jq -c '.accepted // []' <<<"$thread")
-  jq -cs --argjson thread "$thread" --argjson accepted "$accepted" --arg repo "$repo" --arg dirty "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" '
+  # (Approved and restacked since, with what they change the same: still approved.)
+  patches=$(jq -r --argjson t "$thread" '.c | select($t.published[.change_id] and $t.published[.change_id].commit != .commit_id) | .commit_id' <<<"$layers" \
+    | while read -r commit; do jq -cn --arg c "$commit" --arg p "$(patch_of "$repo" "$commit")" '{($c): $p}'; done | jq -cs 'add // {}')
+  jq -cs --argjson thread "$thread" --argjson patches "$patches" --arg repo "$repo" --arg dirty "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" '
     map({change: .c.change_id, commit: .c.commit_id, title: (.c.description | split("\n")[0]),
          empty, conflict, working: .wc})
     | (map(select(.working | not)) | to_entries | map(.value + {layer: (.key + 1)})) as $layers
     | (map(select(.working)) | first) as $wc
     | {v: 1, session: $thread.session, project: $thread.project, repo: $repo, trunk: $thread.trunk,
        workspace: $thread.workspace, revising: ($thread.revising // null),
-       layers: [$layers[] | . + {state: (if .change | IN($accepted[]) then "accepted" else "to review" end)}],
+       layers: [$layers[] | ($thread.published[.change] // null) as $p
+         | . + {state: (if $p == null then "to review"
+                        elif $p.commit == .commit or ($p.patch != null and $p.patch == $patches[.commit]) then "approved"
+                        else "changed" end),
+                pushed: ($p != null and $p.pushed == .commit),
+                published: (if $p then $p | {branch, pr} else null end)}],
+       merged: (($thread.merged // []) | length), forge: ($thread.forge // null),
        uncommitted: ($dirty != "")}' <<<"$layers"
 }
 
@@ -948,12 +973,15 @@ stack_show() {
     "\($D)on \(.trunk), in \(.workspace)\($N)",
     (if .layers == [] then "\($D)No layers yet.\($N)" else empty end),
     (.layers[] | "  \(.layer). \(.title | if . == "" then "(no purpose given)" else . end)"
-      + (if .state == "accepted" then "  \($G)accepted\($N)" else "" end)
+      + (if .state == "approved" then "  \($G)approved\($N)" + (if .published.pr.url then " \($D)\(.published.pr.url)\($N)" elif .published.branch then " \($D)\(.published.branch)\($N)" else "" end)
+           + (if .published.branch and (.pushed | not) then " \($Y)(restacked: smx ai sync publishes it)\($N)" else "" end)
+         elif .state == "changed" then "  \($Y)changed since you approved it\($N)" else "" end)
       + (if .conflict then "  \($R)conflicted\($N)" else "" end)
       + (if .empty then "  \($Y)empty\($N)" else "" end)
       + "  \($D)\(.change[0:8])\($N)"),
     (if .revising then "\($Y)Revising layer \(.revising[0:8]).\($N)" else empty end),
-    (if .uncommitted then "\($D)And changes not committed yet.\($N)" else empty end)' <<<"$view"
+    (if .uncommitted then "\($D)And changes not committed yet.\($N)" else empty end),
+    (if .merged > 0 then "\($D)\(.merged) layer(s) merged already.\($N)" else empty end)' <<<"$view"
 }
 
 stack_diff() {
@@ -992,7 +1020,7 @@ stack_commit() {
     # (Into the layer being revised; then back to the top.)
     if [ -n "$purpose" ]; then purpose_ok "$purpose"; jjr -R "$ws" squash --from @ --into "$target" -m "$purpose" >/dev/null
     else jjr -R "$ws" squash --from @ --into "$target" -u >/dev/null; fi
-    top=$(jjr -R "$ws" log --no-graph -r "heads((::$target | $target::) ~ ::$(jq -r .trunk <<<"$thread")) ~ @" -T 'change_id ++ "\n"' | head -1)
+    top=$(jjr -R "$ws" log --no-graph -r "heads((::$target | $target::) & $(stack_revset "$thread")) ~ @" -T 'change_id ++ "\n"' | head -1)
     jjr -R "$ws" new "${top:-$target}" >/dev/null
     save_thread "$session" "$(jq -c 'del(.revising)' <<<"$thread")"
   else
@@ -1007,8 +1035,8 @@ stack_commit() {
   fi
 }
 
-# revise: start changing a layer (one not accepted yet): what's committed next
-# goes into it.
+# revise: start changing a layer: what's committed next goes into it. (One
+# you've approved is yours to approve again, once it's changed.)
 stack_revise() {
   local session="" which="" thread ws view layer
   while [ "$#" -gt 0 ]; do
@@ -1023,51 +1051,228 @@ stack_revise() {
   view=$(stack_view "$session")
   layer=$(layer_of "$view" "$which")
   [ -n "$layer" ] || die "no layer $which" 4
-  [ "$(jq -r .state <<<"$layer")" != accepted ] || die "layer $which is accepted: only its person changes it now"
   [ "$(jq -r .uncommitted <<<"$view")" = false ] || die "commit (or undo) what's changed first: it'd go into layer $which"
   jjr -R "$ws" new "$(jq -r .change <<<"$layer")" >/dev/null
   save_thread "$session" "$(jq -c --arg c "$(jq -r .change <<<"$layer")" '.revising = $c' <<<"$thread")"
   jq -c '{v: 1, revising: .}' <<<"$layer"
 }
 
-# land: your trunk, fast-forwarded to a layer (and so every layer below it),
-# in your checkout if it's on it (as git would: your uncommitted work stays);
-# the stack, rebased onto your trunk first if it's moved on.
-land_command() {
-  local session=${1:-} which=${2:-} thread repo ws trunk view layer commit branch head
-  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai land <session> <layer>"
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
+
+# --- publishing: what you approve goes to your forge, never your trunk ---------
+
+# Approving a layer publishes it, and every layer below it: each to a branch of
+# its own on your repository's remote, and a pull (or merge) request each,
+# chained bottom first (on GitHub, linked as a stack too, where it can be).
+# Your trunk is the forge's: its own process merges them, as it would anyone's.
+# Nothing but what you approved is pushed, and agents never push.
+
+# A repository's remote: its trunk's, else origin, else its only one (none:
+# nothing to publish to).
+remote_of() {
+  local remote
+  remote=$(git -C "$1" config --get "branch.$2.remote" 2>/dev/null) && [ "$remote" != . ] && { echo "$remote"; return; }
+  git -C "$1" remote get-url origin >/dev/null 2>&1 && { echo origin; return; }
+  if [ "$(git -C "$1" remote | wc -l)" -eq 1 ]; then git -C "$1" remote; fi
+}
+
+# Where a remote is (as configured, not as rewritten for pushing): its forge,
+# host and owner/name, as "<forge> <host> <owner/name>", if it's one smx ai
+# knows and its CLI is here; else "none".
+forge_of() {
+  local url host path
+  url=$(git -C "$1" config --get "remote.$2.url" 2>/dev/null) || { echo none; return; }
+  url=${url#*://} url=${url#*@}
+  case "$url" in
+    *:*/*) host=${url%%:*} path=${url#*:} ;;
+    */*) host=${url%%/*} path=${url#*/} ;;
+    *) echo none; return ;;
+  esac
+  host=${host%%:*} path=${path%.git} path=${path%/}
+  case "$host" in
+    github.com | *github*) command -v gh >/dev/null && { echo "github $host $path"; return; } ;;
+    gitlab.com | *gitlab*) command -v glab >/dev/null && { echo "gitlab $host $path"; return; } ;;
+    codeberg.org | *gitea* | *forgejo*) command -v tea >/dev/null && { echo "gitea $host $path"; return; } ;;
+  esac
+  echo none
+}
+
+# (A branch's name, from a layer's purpose: smx/<words>-<its change>.)
+branch_for() {
+  local slug
+  slug=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40 | sed 's/-*$//')
+  echo "smx/${slug:-layer}-${2:0:8}"
+}
+
+# (What a commit changes, as git identifies a patch: the same after a restack.)
+patch_of() {
+  local cache="$stacks_dir/.layers/$2.patch"
+  if [ ! -s "$cache" ]; then
+    mkdir -p "$stacks_dir/.layers"
+    git -C "$1" show --no-color "$2" | git patch-id --stable | cut -d' ' -f1 >"$cache.new" && mv "$cache.new" "$cache"
+  fi
+  cat "$cache"
+}
+
+# The stack onto your trunk as the remote has it now (fetched): layers it's
+# merged since (squashed or not) drop out, as merged. If that conflicts,
+# nothing changes. Prints the thread, updated.
+restack_onto_remote() {
+  local session=$1 thread=$2 remote=$3 trunk ws op view gone
+  trunk=$(jq -r .trunk <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
+  git -C "$repo" fetch -q "$remote" "+refs/heads/$trunk:refs/remotes/$remote/$trunk" 2>/dev/null \
+    || die "couldn't fetch $trunk from $remote"
+  jjr -R "$ws" git import >/dev/null 2>&1 || true
+  op=$(jjr -R "$ws" op log -n1 --no-graph -T 'id')
+  jjr -R "$ws" rebase -s "roots($(stack_revset "$thread"))" -d "\"$trunk\"@\"$remote\"" --skip-emptied >/dev/null 2>&1 \
+    || die "couldn't rebase the stack onto $remote's $trunk"
+  view=$(stack_view "$session")
+  if [ "$(jq '[.layers[] | select(.conflict)] | length' <<<"$view")" -gt 0 ]; then
+    jjr -R "$ws" op restore "$op" >/dev/null 2>&1 || true
+    die "$remote's $trunk has moved on, and the stack conflicts with it: have the agent rebase it (r on its bottom layer)"
+  fi
+  # (Published layers no longer in the stack: merged.)
+  gone=$(jq -c --argjson v "$view" '[.published // {} | to_entries[] | select(.key | IN($v.layers[].change) | not)]' <<<"$thread")
+  jq -c --argjson gone "$gone" --argjson t "$(now_ms)" \
+    '.merged = ((.merged // []) + [$gone[] | .value + {change: .key, at: $t}]) | .published = ((.published // {}) | with_entries(select(.key | IN($gone[].key) | not)))' <<<"$thread"
+}
+
+# Layers (JSON lines, bottom first) to their branches on the remote, at once
+# (and only over what was pushed there last), then to their requests, each on
+# the one below. Prints the thread, updated.
+publish_layers() {
+  local thread=$1 remote=$2 layers=$3 trunk forge host slug pushes=() leases=() layer branch prev base pr number url
+  trunk=$(jq -r .trunk <<<"$thread")
+  while IFS= read -r layer; do
+    branch=$(jq -r --arg c "$(jq -r .change <<<"$layer")" '.published[$c].branch // empty' <<<"$thread")
+    [ -n "$branch" ] || branch=$(branch_for "$(jq -r .title <<<"$layer")" "$(jq -r .change <<<"$layer")")
+    prev=$(jq -r --arg c "$(jq -r .change <<<"$layer")" '.published[$c].pushed // empty' <<<"$thread")
+    pushes+=("$(jq -r .commit <<<"$layer"):refs/heads/$branch")
+    leases+=("--force-with-lease=refs/heads/$branch:$prev")
+    thread=$(jq -c --argjson l "$layer" --arg b "$branch" --arg p "$(patch_of "$repo" "$(jq -r .commit <<<"$layer")")" --argjson t "$(now_ms)" \
+      '.published[$l.change] = ((.published[$l.change] // {}) + {branch: $b, title: $l.title, commit: $l.commit, patch: $p, at: $t})' <<<"$thread")
+  done <<<"$layers"
+  git -C "$repo" push -q --atomic --no-verify "${leases[@]}" "$remote" "${pushes[@]}" 2>"$stacks_dir/.push.err" \
+    || die "couldn't push to $remote: $(tail -3 "$stacks_dir/.push.err" | tr '\n' ' ')(nothing was pushed)"
+  thread=$(jq -c '.published |= map_values(.pushed = .commit)' <<<"$thread")
+
+  read -r forge host slug <<<"$(forge_of "$repo" "$remote")"
+  base=$trunk
+  local numbers=()
+  while IFS= read -r layer; do
+    pr=$(jq -c --arg c "$(jq -r .change <<<"$layer")" '.published[$c]' <<<"$thread")
+    branch=$(jq -r .branch <<<"$pr") number=$(jq -r '.pr.number // empty' <<<"$pr") url=""
+    case "$forge" in
+      github)
+        if [ -n "$number" ]; then
+          gh pr edit "$number" -R "$host/$slug" --base "$base" >/dev/null 2>&1 || say "couldn't set #$number's base to $base"
+        elif url=$(gh pr create -R "$host/$slug" --base "$base" --head "$branch" --title "$(jq -r .title <<<"$pr")" --body "" 2>"$stacks_dir/.push.err" | tail -1); then
+          number=${url##*/}
+        else
+          say "couldn't open a pull request for $branch: $(tail -1 "$stacks_dir/.push.err")"
+        fi
+        ;;
+      gitlab)
+        if [ -n "$number" ]; then
+          glab mr update "$number" -R "$host/$slug" --target-branch "$base" >/dev/null 2>&1 || say "couldn't set !$number's target to $base"
+        elif url=$(glab mr create -R "$host/$slug" --source-branch "$branch" --target-branch "$base" --title "$(jq -r .title <<<"$pr")" \
+          --description "" --yes --no-editor 2>"$stacks_dir/.push.err" | grep -o 'https://[^ ]*' | tail -1) && [ -n "$url" ]; then
+          number=${url##*/}
+        else
+          say "couldn't open a merge request for $branch: $(tail -1 "$stacks_dir/.push.err")"
+        fi
+        ;;
+      gitea)
+        if [ -z "$number" ]; then
+          if url=$(tea pr create --repo "$slug" --head "$branch" --base "$base" --title "$(jq -r .title <<<"$pr")" --description "" 2>"$stacks_dir/.push.err" \
+            | grep -o 'https://[^ ]*' | tail -1) && [ -n "$url" ]; then
+            number=${url##*/}
+          else
+            say "couldn't open a pull request for $branch: $(tail -1 "$stacks_dir/.push.err")"
+          fi
+        fi
+        ;;
+    esac
+    if [ -n "$number" ]; then
+      numbers+=("$number")
+      thread=$(jq -c --arg c "$(jq -r .change <<<"$layer")" --arg n "$number" --arg u "$url" \
+        '.published[$c].pr = {number: ($n | tonumber? // $n), url: (if $u != "" then $u else .published[$c].pr.url end)}' <<<"$thread")
+    fi
+    base=$branch
+  done <<<"$layers"
+  rm -f "$stacks_dir/.push.err"
+  # (On GitHub, a stack of them too, where the repository has stacks.)
+  if [ "$forge" = github ] && [ "${#numbers[@]}" -gt 1 ] && gh stack --help >/dev/null 2>&1; then
+    (cd "$repo" && gh stack link --remote "$remote" --base "$trunk" "${numbers[@]}" >/dev/null 2>&1) || true
+  fi
+  jq -c --arg f "$forge" '.forge = $f' <<<"$thread"
+}
+
+# The layers to publish: up to one (by its number), bottom first.
+layers_upto() {
+  jq -c --argjson n "$2" '.layers[] | select(.layer <= $n)' <<<"$1"
+}
+
+# approve: a layer, and every layer below it, published for the forge to
+# review and merge: never on your trunk. Not while one's conflicted, or holds
+# an agent's call that's still provisional (approving never decides for you).
+approve_command() {
+  local session=${1:-} which=${2:-} thread ws remote view layer n change unsettled
+  [ -n "$session" ] && [ -n "$which" ] && [ "$#" -eq 2 ] || die "usage: smx ai approve <session> <layer>"
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
   view=$(stack_view "$session")
   layer=$(layer_of "$view" "$which")
   [ -n "$layer" ] || die "no layer $which" 4
-  [ "$(jq -r .conflict <<<"$layer")" = false ] || die "layer $which is conflicted: it can't land"
-  # (Not with its own calls unsettled: approving never decides for you.)
-  local unsettled
-  unsettled=$(fold | jq -r --argjson upto "$(jq -c '[.layers[] | select(.layer <= ($l | tonumber)) | .change]' --arg l "$(jq -r .layer <<<"$layer")" <<<"$view")" \
+  change=$(jq -r .change <<<"$layer") n=$(jq -r .layer <<<"$layer")
+  [ "$(jq --argjson n "$n" '[.layers[] | select(.layer <= $n and .conflict)] | length' <<<"$view")" -eq 0 ] \
+    || die "a layer up to $n is conflicted: it can't be approved"
+  unsettled=$(fold | jq -r --argjson upto "$(jq -c --argjson n "$n" '[.layers[] | select(.layer <= $n) | .change]' <<<"$view")" \
     '[.current[] | select(.provisional and .layer != null and (.layer | IN($upto[])))] | map("\(.id) \(.text)") | join("; ")')
   [ -z "$unsettled" ] || die "these calls made in it are still provisional: $unsettled (confirm, replace or withdraw them first)"
 
-  head=$(git -C "$repo" rev-parse "refs/heads/$trunk")
-  commit=$(jq -r .commit <<<"$layer")
-  if ! git -C "$repo" merge-base --is-ancestor "$head" "$commit"; then
-    # (Your trunk's moved on: the stack goes onto it, then lands if it's clean.)
-    jjr -R "$ws" rebase -s "roots((::@ ~ ::$trunk)::)" -d "$trunk" >/dev/null 2>&1 || die "couldn't rebase the stack onto $trunk"
-    view=$(stack_view "$session")
-    layer=$(layer_of "$view" "$(jq -r .change <<<"$layer")")
-    [ "$(jq -r .conflict <<<"$layer")" = false ] || die "$trunk has moved on, and the stack conflicts with it now: it's rebased; the agent can fix it"
-    commit=$(jq -r .commit <<<"$layer")
+  remote=$(remote_of "$repo" "$(jq -r .trunk <<<"$thread")")
+  if [ -z "$remote" ]; then
+    # (Nowhere to publish: approved here, for when there is.)
+    thread=$(jq -c --argjson v "$(layers_upto "$view" "$n" | jq -cs .)" --argjson t "$(now_ms)" \
+      'reduce $v[] as $l (.; .published[$l.change] = ((.published[$l.change] // {}) + {title: $l.title, commit: $l.commit, at: $t}))' <<<"$thread")
+    save_thread "$session" "$thread"
+    echo "${G}✓${N} Approved, up to: $(jq -r .title <<<"$layer") ${D}($repo has no remote to publish it to)${N}"
+    return
   fi
-  branch=$(git -C "$repo" branch --show-current)
-  if [ "$branch" = "$trunk" ]; then
-    git -C "$repo" merge -q --ff-only "$commit" 2>/dev/null \
-      || die "couldn't fast-forward your $trunk (in $repo) to it: it'd overwrite uncommitted changes there"
-  else
-    git -C "$repo" update-ref "refs/heads/$trunk" "$commit" "$head"
+  thread=$(restack_onto_remote "$session" "$thread" "$remote")
+  save_thread "$session" "$thread"
+  view=$(stack_view "$session")
+  layer=$(layer_of "$view" "$change")
+  [ -n "$layer" ] || { echo "${D}It's merged on $remote already.${N}"; return; }
+  thread=$(publish_layers "$thread" "$remote" "$(layers_upto "$view" "$(jq -r .layer <<<"$layer")")")
+  save_thread "$session" "$thread"
+  jq -r --arg G "$G" --arg D "$D" --arg N "$N" --arg r "$remote" --argjson v "$(layers_upto "$view" "$(jq -r .layer <<<"$layer")" | jq -cs .)" '
+    "\($G)✓\($N) Approved, and published to \($r):",
+    (. as $t | $v[] | $t.published[.change] as $p
+      | "  \(.layer). \(.title)  \($D)\($p.branch)\(if $p.pr.url then "  " + $p.pr.url elif $p.pr then "  #\($p.pr.number)" else "" end)\($N)")' <<<"$thread"
+}
+
+# sync: the stack onto your trunk as the remote has it now (what it's merged
+# drops out), and what you approved that's restacked since, published again.
+sync_command() {
+  local session=${1:-} thread remote view approved
+  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai sync <session>"
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread")
+  remote=$(remote_of "$repo" "$(jq -r .trunk <<<"$thread")")
+  [ -n "$remote" ] || die "$repo has no remote to sync with"
+  local before
+  before=$(jq '.merged // [] | length' <<<"$thread")
+  thread=$(restack_onto_remote "$session" "$thread" "$remote")
+  save_thread "$session" "$thread"
+  view=$(stack_view "$session")
+  # (Approved from the bottom up, unchanged since: theirs to publish again.)
+  approved=$(jq -c 'first(.layers | to_entries[] | select(.value.state != "approved") | .key) // (.layers | length)' <<<"$view")
+  if [ "$approved" -gt 0 ] && [ "$(jq --argjson n "$approved" '[.layers[:$n][] | select(.pushed | not)] | length' <<<"$view")" -gt 0 ]; then
+    thread=$(publish_layers "$thread" "$remote" "$(layers_upto "$view" "$approved")")
+    save_thread "$session" "$thread"
   fi
-  jjr -R "$ws" git import >/dev/null 2>&1 || true
-  save_thread "$session" "$(jq -c --argjson l "$(jq -c '[.layers[] | select(.layer <= ($n | tonumber)) | {change, commit, title}]' --arg n "$(jq -r .layer <<<"$layer")" <<<"$view")" \
-    --argjson t "$(now_ms)" '.landed = ((.landed // []) + [$l[] | . + {at: $t}])' <<<"$thread")"
-  echo "${G}✓${N} Landed on $trunk, up to: $(jq -r .title <<<"$layer") ${D}(${commit:0:12})${N}"
+  local merged
+  merged=$(($(jq '.merged // [] | length' <<<"$thread") - before))
+  echo "${G}✓${N} In step with $remote's $(jq -r .trunk <<<"$thread")${D}$([ "$merged" -eq 0 ] || echo ": $merged layer(s) merged since")${N}"
 }
 
 # --- threads: new, reply, close, park, context --------------------------------
@@ -1174,17 +1379,17 @@ close_thread() {
   need_server
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
-  # (A stack: its layers land, or are set aside: still in jj's history, never
-  # reverted; its workspace goes.)
+  # (A stack: its layers are approved (published), or set aside: still in jj's
+  # history, never reverted; its workspace goes.)
   local thread n
   if [ -f "$(thread_file "$session")" ] && [ "$(jq -r '.closed // empty' "$(thread_file "$session")")" = "" ]; then
     thread=$(thread_json "$session")
     n=$(stack_view "$session" 2>/dev/null | jq '.layers | length') || n=0
     if [ "$n" -gt 0 ]; then
       case "$decision" in
-        accept) land_command "$session" "$n" >/dev/null ;;
+        accept) approve_command "$session" "$n" >/dev/null ;;
         discard) ;;
-        *) die "it has $n layer(s) not landed: close it with --accept (land them all) or --discard (set them aside)" ;;
+        *) die "it has $n layer(s): close it with --accept (approve them all) or --discard (set them aside)" ;;
       esac
     fi
     local repo ws
@@ -1298,7 +1503,8 @@ history_command() {
     def totals: [plural(length; "thread"),
       (([.[].tokens] | add) as $t | if $t > 0 then "\($t | count) tokens" else empty end),
       ([.[].cost] | add | money // empty)] | join(" · ");
-    def outcome: [(if .landed > 0 then plural(.landed; "layer") + " landed" else empty end),
+    def outcome: [(if .merged > 0 then plural(.merged; "layer") + " merged" else empty end),
+      (if .approved > 0 then "\(.approved) approved, on the forge" else empty end),
       (if .closing == "discard" then "set aside" else empty end)] | join(", ") | select(. != "");
     def span: (.created | clock) as $from | (.updated | clock) as $to
       | if (.created | secs | strflocaltime("%F")) != (.updated | secs | strflocaltime("%F"))
@@ -1608,7 +1814,8 @@ case "${1:-}" in
   log) shift; log_command "$@" ;;
   ask) shift; ask_command "$@" ;;
   stack) shift; stack_command "$@" ;;
-  land) shift; land_command "$@" ;;
+  approve) shift; approve_command "$@" ;;
+  sync) shift; sync_command "$@" ;;
   new) shift; new_thread "$@" ;;
   reply) shift; reply "$@" ;;
   park) shift; park "$@" ;;

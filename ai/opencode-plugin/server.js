@@ -128,7 +128,7 @@ export default {
       editor.add({
         name: "revise",
         description:
-          "Start changing a layer of your stack that isn't accepted yet (by its number, or change id): change the " +
+          "Start changing a layer of your stack, approved or not (by its number, or change id): change the " +
           "files, then smudgenix_commit puts the change into it, and the layers above restack on it.",
         input: {
           type: "object",

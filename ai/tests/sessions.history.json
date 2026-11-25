@@ -158,14 +158,16 @@
   "stacks": [
     {
       "session": "ses_a",
-      "landed": [
+      "merged": [
         {
           "change": "x"
-        },
-        {
-          "change": "y"
         }
       ],
+      "published": {
+        "y": {
+          "branch": "smx/y"
+        }
+      },
       "closing": "discard"
     }
   ]
