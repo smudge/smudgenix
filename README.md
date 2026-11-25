@@ -161,6 +161,16 @@ the same from a terminal. Closing a thread approves its layers (`--accept`) or
 sets them aside (`--discard`: still in jj's history, never reverted), and
 removes its workspace.
 
+Each layer's check is evidence, not the agent's word: smx ai runs the
+project's check on exactly that layer, in a fresh copy and agents' sandbox
+(it's their code), by itself, one layer at a time, lowest first, and keeps the
+result by what's in the layer, so a restack that doesn't change it keeps it.
+The check is guessed from the project's files (`nix flake check`, `npm test`,
+`cargo test`, `go test ./...`, `make check`, `pytest`…), or the one you last
+gave it (`smx ai check <session> [<layer>] --command "<check>"`). In a stack,
+`v` checks the selected layer now and `e` shows its log; a layer whose check
+fails is approved only if you say so (Shift+A, or `approve --anyway`).
+
 ## smx
 
 `smx`, installed for every user, works on your home, and never needs sudo.

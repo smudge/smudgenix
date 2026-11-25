@@ -190,7 +190,7 @@ local function turn(thread, children, questions)
     return "away", 0, "subagents at work"
   end
   local stack = stacksBy[thread.id]
-  local n, spots, conflicted, approved = 0, 0, 0, 0
+  local n, spots, conflicted, approved, failing = 0, 0, 0, 0, 0
   for _, layer in stack and stack.layers or {} do
     if layer.state == "approved" then
       approved += 1
@@ -199,10 +199,12 @@ local function turn(thread, children, questions)
       spots += #(layer.hotspots or {})
     end
     if layer.conflict then conflicted += 1 end
+    if layer.check and layer.check.state == "failed" then failing += 1 end
   end
   if n > 0 then
     return "you", 1, `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
       .. (conflicted > 0 and `, {conflicted} conflicted` or "") .. (approved > 0 and `, {approved} approved` or "")
+      .. (failing > 0 and `, {failing} failing {failing == 1 and "its" or "their"} check` or "")
   end
   if thread.unseen then
     return "you", 2, thread.state == "failed" and "back: it failed" or "back: it's answered"
@@ -449,6 +451,10 @@ local function renderStack(agents, stack)
     if spots > 0 then table.insert(facts, `{spots} flagged`) end
     if layer.conflict then table.insert(facts, "conflicted") end
     if stack.revising == layer.change then table.insert(facts, "being revised") end
+    local check = layer.check and layer.check.state
+    if check == "passed" then table.insert(facts, "✓ check")
+    elseif check == "failed" then table.insert(facts, "✗ check")
+    elseif check == "running" then table.insert(facts, "checking…") end
     local pr = layer.published and layer.published.pr
     if layer.state == "approved" then
       table.insert(facts, pr and `approved: #{pr.number}` or "approved")
@@ -465,16 +471,26 @@ local function renderStack(agents, stack)
         or ui.label({ text = tostring(i), fontSize = 12, fontWeight = "bold", color = "on_surface/0.5" }),
       ui.label({ text = layer.title ~= "" and layer.title or "(no purpose given)", maxLines = 1, flexGrow = 1,
         color = layer.conflict and "error" or "on_surface" }),
-      ui.label({ text = table.concat(facts, "  ·  "), fontSize = 11, color = spots > 0 and "tertiary" or "on_surface/0.55" }),
+      ui.label({ text = table.concat(facts, "  ·  "), fontSize = 11, color = check == "failed" and "error" or spots > 0 and "tertiary" or "on_surface/0.55" }),
     }))
   end
   if stack.uncommitted then
     table.insert(rows, ui.label({ text = "And changes it hasn't committed yet.", fontSize = 11, color = "on_surface/0.5" }))
   end
 
-  -- The selected layer: what's flagged, its calls still to settle, its diff.
+  -- The selected layer: its check, what's flagged, its calls still to settle,
+  -- its diff.
   local detail = {}
   if selectedLayer then
+    local check = selectedLayer.check
+    local said = check and ({
+      passed = { `✓ Its check passes on this layer: {check.command}`, "secondary" },
+      failed = { `✗ Its check fails on this layer (exit {check.exit}): {check.command}. e shows its log; v runs it again; Shift+A approves anyway.`, "error" },
+      running = { `Checking: {check.command}…`, "primary" },
+      interrupted = { `Its check was interrupted: {check.command}. v runs it again.`, "tertiary" },
+    })[check.state] or (selectedLayer.checkable and { "Not checked yet: it's in line (v checks it now).", "on_surface/0.6" }
+      or { "No check known for this project: smx ai check <session> --command \"<check>\" sets one.", "on_surface/0.5" })
+    table.insert(detail, ui.label({ text = said[1], fontSize = 11, color = said[2], maxLines = 2 }))
     for _, spot in selectedLayer.hotspots or {} do
       table.insert(detail, ui.label({ text = `⚑ {spot.path}: {spot.why}`, fontSize = 11, color = "tertiary", maxLines = 2 }))
     end
@@ -512,7 +528,7 @@ local function renderStack(agents, stack)
     }) or ui.box({ height = 0 }),
     ui.column({ gap = 2 }, rows),
     ui.scroll({ flexGrow = 1, gap = 0, revealKey = "d-" .. diffAt }, detail),
-    ui.label({ text = "j/k layer  ·  Shift+J/K scroll  ·  a approve up to it (pull requests)  ·  r revise it  ·  s sync  ·  Enter full diff  ·  ← back",
+    ui.label({ text = "j/k layer  ·  Shift+J/K scroll  ·  a approve up to it (pull requests)  ·  r revise  ·  v check  ·  s sync  ·  Enter full diff  ·  ← back",
       fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
@@ -945,10 +961,20 @@ function onKey(chord, pressed)
       diffAt = math.max(diffAt - 20, 1)
     elseif chord == "Left" or chord == "h" then
       stacking = nil
-    elseif (chord == "a" or chord == "s") and not publishing then
+    elseif chord == "v" then
+      run({ "smx", "ai", "check", stack.session, layer.change, "--json" })
+    elseif chord == "e" then
+      if layer.check and layer.check.log then
+        noctalia.runInTerminal("less +G " .. quote(layer.check.log))
+        panel.close() -- (so you can read it)
+      end
+      return
+    elseif (chord == "a" or chord == "Shift+A" or chord == "Shift+a" or chord == "s") and not publishing then
       -- (It fetches and pushes: it takes a moment.)
-      publishing = chord == "a" and `Approving up to layer {layerSelected}: publishing to its remote…` or "Syncing with its remote…"
-      local argv = chord == "a" and { "smx", "ai", "approve", stack.session, layer.change } or { "smx", "ai", "sync", stack.session }
+      local approving = chord ~= "s"
+      publishing = approving and `Approving up to layer {layerSelected}: publishing to its remote…` or "Syncing with its remote…"
+      local argv = approving and { "smx", "ai", "approve", stack.session, layer.change } or { "smx", "ai", "sync", stack.session }
+      if chord ~= "a" and approving then table.insert(argv, "--anyway") end
       noctalia.runAsync(argv, function(result)
         publishing = nil
         if result.exitCode ~= 0 then
