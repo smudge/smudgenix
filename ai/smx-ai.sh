@@ -65,6 +65,10 @@ Agents (OpenCode), as part of the desktop.
   sync <session>          Restack onto the remote's trunk (what it's merged
                           drops out), publishing what you approved again
   stack commit|revise …   (For agents, through smudgenix's OpenCode plugin)
+  lead [<layers>] [--project <name>]
+                          How many layers agents may have waiting for you
+                          before they stop (by default 3)
+  pause …                 (For agents: why one stopped)
 
   history [--days <n> | --since <date>] [--project <name>] [--json]
                           Your threads, day by day, closed ones too (by
@@ -130,6 +134,7 @@ shape='def shape:
   (.time.busy // 0) as $busy | (.time.idle // 0) as $idle
   | ($busy > $idle) as $running
   | {id, title, dir: .location.directory, parent: .parentID, updated: .time.updated, running: $running,
+     started: (if $busy > 0 then $busy else null end),
      outcome: ({succeeded: "done", failed: "failed"}[.outcome // ""] // "idle"),
      unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")};'
 
@@ -278,15 +283,17 @@ tui_changes() {
   done
 }
 
-# watch's decisions and stacks, while it runs: at first, and whenever they
+# watch's decisions, stacks and pauses, while it runs: at first, and whenever they
 # change; and the next layer's check, if none's running.
 store_changes() {
-  local decided last_decided="" stacked last_stacked="" watcher=$$
+  local decided last_decided="" stacked last_stacked="" paused last_paused="" watcher=$$
   while [ -e "/proc/$watcher" ]; do
     decided=$(fold 2>/dev/null | jq -c '{type: "smx.decisions", current, briefs}') || decided=""
     [ -z "$decided" ] || [ "$decided" = "$last_decided" ] || { echo "$decided"; last_decided=$decided; }
     stacked=$(stacks_json 2>/dev/null | jq -c '{type: "smx.stacks", stacks: .}') || stacked=""
     [ -z "$stacked" ] || [ "$stacked" = "$last_stacked" ] || { echo "$stacked"; last_stacked=$stacked; }
+    paused=$(pauses_json | jq -c '{type: "smx.pauses", pauses: .}') || paused=""
+    [ -z "$paused" ] || [ "$paused" = "$last_paused" ] || { echo "$paused"; last_paused=$paused; }
     [ -z "$stacked" ] || auto_check "$(jq -c .stacks <<<"$stacked")" >/dev/null 2>&1 &
     sleep 5
   done
@@ -793,6 +800,7 @@ agent_context() {
     "- When a choice is a judgment call (a tradeoff the person would care about, hard to reverse, or nothing below covers it), call the smudgenix_ask tool with the question, two or three one-line options and your pick, then stop and end your turn: the answer comes back to you.",
     "- A small, reversible call within the direction and constraints: make it, and record it with smudgenix_decide (provisional until the person confirms it). If it would break a constraint, ask instead.",
     "- Never write decisions into files, plans or commit bodies: the log is where they live.",
+    "- End every turn by calling smudgenix_pause with why you stopped: decision (you asked something), uncertain (unsure how to go on), conflict (something you were told conflicts with what stands), failing (a check or build fails and you can'"'"'t fix it), lead (as many layers wait for approval as you may get ahead), appetite (it'"'"'s costing more than it'"'"'s worth) or done (all of it is done), and a line on it.",
     "",
     items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose"),
     (if .briefs == [] then empty else "Asked, waiting on the person (do not decide these yourself):", (.briefs[] | "- \(.question) [\(.id)]"), "" end),
@@ -1035,6 +1043,11 @@ stack_commit() {
     save_thread "$session" "$(jq -c 'del(.revising)' <<<"$thread")"
   else
     purpose_ok "$purpose"
+    # (No further ahead of you than the project's lead.)
+    local waiting lead
+    waiting=$(stack_view "$session" | jq '[.layers[] | select(.state != "approved")] | length')
+    lead=$(lead_of "$(jq -r .project <<<"$thread")")
+    [ "$waiting" -lt "$lead" ] || die "$waiting layers already wait for the person's approval (as many as this project lets you work ahead): don't commit more. Call smudgenix_pause with reason lead and end your turn; what you've changed stays, uncommitted."
     jjr -R "$ws" commit -m "$purpose" >/dev/null
   fi
   view=$(stack_view "$session")
@@ -1442,6 +1455,72 @@ sync_command() {
   local merged
   merged=$(($(jq '.merged // [] | length' <<<"$thread") - before))
   echo "${G}✓${N} In step with $remote's $(jq -r .trunk <<<"$thread")${D}$([ "$merged" -eq 0 ] || echo ": $merged layer(s) merged since")${N}"
+}
+
+# --- pauses: why an agent stopped -----------------------------------------------
+
+# An agent ends each turn saying why, through smudgenix's OpenCode plugin: so
+# what comes back to you is sorted by what it needs from you, and how far
+# agents work ahead can be tuned from why they stop (they're all kept).
+pause_log="$store_dir/pauses.jsonl"
+pause_reasons="decision uncertain conflict failing lead appetite done"
+
+# pause: the reason (one of $pause_reasons) and a line on it.
+pause_command() {
+  local session="" thread="" reason="" note="" project layers=0
+  local usage="usage: smx ai pause --session <session> --thread <session> --reason <reason> \"<a line on it>\" (reasons: $pause_reasons)"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --session) session=${2:-}; shift ;;
+      --thread) thread=${2:-}; shift ;;
+      --reason) reason=${2:-}; shift ;;
+      -*) die "$usage" ;;
+      *) [ -z "$note" ] || die "$usage"; note=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] && [ -n "$thread" ] || die "$usage"
+  case " $pause_reasons " in *" $reason "*) ;; *) die "$usage" ;; esac
+  one_line "the line" "$note"
+  project=$(project_of "$PWD")
+  if [ -f "$(thread_file "$thread")" ]; then
+    layers=$(stack_view "$thread" 2>/dev/null | jq '[.layers[] | select(.state != "approved")] | length') || layers=0
+  fi
+  append_entry "$pause_log" p "$(jq -cn --arg s "$session" --arg t "$thread" --arg p "$project" --arg r "$reason" --arg n "$note" --argjson l "${layers:-0}" \
+    '{session: $s, thread: $t, project: $p, reason: $r, note: $n, unapproved: $l}')"
+}
+
+# Each thread's latest pause (of the last 500): what watch publishes.
+pauses_json() {
+  tail -n 500 "$pause_log" 2>/dev/null | jq -cs 'group_by(.thread) | map(max_by(.time))' || echo '[]'
+}
+
+# How many layers an agent may have waiting for you before it stops for you
+# (a pause, "lead"): the project's, else 3.
+lead_of() {
+  if [ -s "$store_dir/leads/$1" ]; then cat "$store_dir/leads/$1"; else echo 3; fi
+}
+
+# lead: how far agents may work ahead of you in a project (by default the
+# one you're in): layers not approved yet, at most.
+lead_command() {
+  local project="" n=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project) project=${2:-}; shift ;;
+      *) [ -z "$n" ] || die "usage: smx ai lead [<layers>] [--project <name>]"; n=$1 ;;
+    esac
+    shift
+  done
+  if [ -z "$project" ]; then
+    git rev-parse --show-toplevel >/dev/null 2>&1 || die "you're not in a project: say which (--project <name>)"
+    project=$(project_of "$PWD")
+  fi
+  if [ -z "$n" ]; then echo "$(lead_of "$project") layers, in $project"; return; fi
+  [[ "$n" =~ ^[1-9][0-9]?$ ]] || die "the lead is a number of layers, from 1"
+  mkdir -p "$store_dir/leads"
+  echo "$n" >"$store_dir/leads/$project"
+  echo "${G}✓${N} Agents in $project work up to $n layers ahead of you."
 }
 
 # --- threads: new, reply, close, park, context --------------------------------
@@ -1986,6 +2065,8 @@ case "${1:-}" in
   approve) shift; approve_command "$@" ;;
   sync) shift; sync_command "$@" ;;
   check) shift; check_command "$@" ;;
+  pause) shift; pause_command "$@" ;;
+  lead) shift; lead_command "$@" ;;
   new) shift; new_thread "$@" ;;
   reply) shift; reply "$@" ;;
   park) shift; park "$@" ;;

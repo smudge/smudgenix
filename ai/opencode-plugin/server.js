@@ -101,7 +101,7 @@ export default {
             ...input.options.flatMap((o) => ["--option", o]), "--pick", String(input.pick)];
           if (input.serves) args.push("--serves", input.serves);
           const brief = JSON.parse(await run(smxAi, args, dir));
-          return { content: `Asked (${brief.id}). Stop here and end your turn: the person's answer will come back to you.` };
+          return { content: `Asked (${brief.id}). Call smudgenix_pause with reason decision, then end your turn: the person's answer will come back to you.` };
         },
       });
       // A thread's stack (smx ai stack): its agent commits and revises layers
@@ -150,6 +150,29 @@ export default {
         execute: async (_input, context) => {
           const { dir, thread } = await where(context.sessionID);
           return { content: await run(smxAi, ["stack", thread], dir) };
+        },
+      });
+      editor.add({
+        name: "pause",
+        description:
+          "Say why you're stopping, as the last thing in every turn: decision (you asked the person something), " +
+          "uncertain (unsure how to go on), conflict (what you were told conflicts with what stands), failing " +
+          "(a check or build fails and you can't fix it), lead (as many layers wait for approval as you may get " +
+          "ahead), appetite (it's costing more than it's worth) or done (all of it is done). Then end your turn.",
+        input: {
+          type: "object",
+          properties: {
+            reason: { type: "string", enum: ["decision", "uncertain", "conflict", "failing", "lead", "appetite", "done"] },
+            line: { type: "string", description: "One line on it, for the person" },
+          },
+          required: ["reason", "line"],
+          additionalProperties: false,
+        },
+        options: { namespace: "smudgenix" },
+        execute: async (input, context) => {
+          const { dir, thread } = await where(context.sessionID);
+          await run(smxAi, ["pause", "--session", context.sessionID, "--thread", thread, "--reason", input.reason, input.line], dir);
+          return { content: "Noted. End your turn now." };
         },
       });
       editor.add({

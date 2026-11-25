@@ -1,7 +1,7 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
 # first event), `smx.tuis` (opencode's TUIs open now),
-# `smx.decisions`, `smx.stacks` and `smx.server`), smx ai's (v1) out:
+# `smx.decisions`, `smx.stacks`, `smx.pauses` and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
@@ -9,6 +9,7 @@
 #   {"v":1,"type":"server","state":"up"|"stopped"|"down"}
 #   {"v":1,"type":"decisions","current":[…],"briefs":[…]}   (see smx ai log --json)
 #   {"v":1,"type":"stacks","stacks":[…]}   (threads' stacks; see smx ai stack --json)
+#   {"v":1,"type":"pauses","pauses":[…]}   (each thread's latest: why its agent stopped)
 #
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
@@ -34,7 +35,7 @@
 #   jq -cn --unbuffered -f normalize.jq
 
 def blank($id; $dir):
-  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, last: null, about: null, project: null, permissions: [], forms: []};
+  {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, started: null, last: null, about: null, project: null, permissions: [], forms: []};
 
 # The TUIs (of these) showing a session.
 def tuis_on($tuis):
@@ -45,7 +46,7 @@ def tuis_on($tuis):
 
 def public($tuis):
   tuis_on($tuis) as $on
-  | {id, title, dir, project, parent, updated, last, about,
+  | {id, title, dir, project, parent, updated, started, last, about,
    open: ($on | length > 0), terminals: ([$on[].seen[]] | unique),
    state: (if (.permissions | length) > 0 then "needs-permission"
            elif (.forms | length) > 0 then "needs-input"
@@ -77,7 +78,7 @@ def apply($e):
   elif $e.type == "session.renamed" then .title = $e.data.title
   elif $e.type == "session.text.ended" then .last = ($e.data.text | summary)
   elif $e.type == "session.compaction.ended" then .about = ($e.data.text | objective)
-  elif $e.type == "session.execution.started" then .running = true | .unseen = false
+  elif $e.type == "session.execution.started" then .running = true | .unseen = false | .started = ($e.created // .started)
   elif $e.type == "session.execution.succeeded" then .running = false | .outcome = "done" | .unseen = true
   elif $e.type == "session.execution.failed" then .running = false | .outcome = "failed" | .unseen = true
   elif $e.type == "session.execution.interrupted" then .running = false | .outcome = "idle"
@@ -115,6 +116,8 @@ foreach inputs as $e ({sessions: {}, tuis: [], emit: []};
       .emit = [{v: 1, type: "decisions", current: $e.current, briefs: $e.briefs}]
     elif $e.type == "smx.stacks" then
       .emit = [{v: 1, type: "stacks", stacks: $e.stacks}]
+    elif $e.type == "smx.pauses" then
+      .emit = [{v: 1, type: "pauses", pauses: $e.pauses}]
     elif $e.type == "smx.server" then
       .emit = [{v: 1, type: "server", state: $e.state}]
       | if $e.state != "up" then .sessions = {} else . end
