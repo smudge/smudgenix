@@ -41,7 +41,9 @@ let
       if title != null && lib.hasPrefix "spawn" action then "Open"
       else if hasWord "workspace" then "Workspaces"
       else if hasWord "monitor" then "Monitors"
-      else if hasWord "window" || hasWord "column" || hasWord "floating" then "Windows"
+      else if family != null || lib.hasSuffix "-first" name || lib.hasSuffix "-last" name then "Move around"
+      else if lib.any hasWord [ "width" "height" "maximize" "fullscreen" ] then "Size"
+      else if lib.any hasWord [ "window" "column" "floating" ] then "Windows"
       else "Session";
     # (Families: H/J/K/L for directions, 1…9 for workspaces.)
     family =
@@ -70,4 +72,4 @@ lib.filter (s: s.binds != [ ]) (map (section: {
   title = section;
   binds = map (e: { keys = lib.concatStringsSep "+" e.keys; inherit (e) title; })
     (lib.filter (e: e.section == section) entries);
-}) [ "Open" "Windows" "Workspaces" "Monitors" "Session" ])
+}) [ "Open" "Move around" "Windows" "Size" "Workspaces" "Monitors" "Session" ])

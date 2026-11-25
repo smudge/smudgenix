@@ -51,7 +51,7 @@ in
     };
     overlayAfter = lib.mkOption {
       type = lib.types.ints.unsigned;
-      default = 2500;
+      default = 2000;
       description = ''
         Milliseconds Super is held alone before its shortcuts show, until
         it's released (0 for never). (Super+Shift+/ shows niri's list of
