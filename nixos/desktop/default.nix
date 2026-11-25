@@ -13,6 +13,7 @@ in
     ./apps.nix
     ./binds.nix
     ./firefox.nix
+    ./leader.nix
     ./niri.nix
     ./noctalia.nix
     (removed "gnome")

@@ -63,6 +63,8 @@ let
       font_family = theme.fonts.sans.name;
       corner_radius_scale = 0.5;
       settings_show_advanced = false;
+      # Panels drop from the bar, which shows while they're open.
+      panel = { launcher_placement = "attached"; clipboard_placement = "attached"; };
       launcher = {
         layout = "simple";
         show_app_origin_indicator = false;

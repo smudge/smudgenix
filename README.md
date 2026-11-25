@@ -36,6 +36,11 @@ and system share one smudgenix and nixpkgs, and update in lockstep.
 Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 `nix-shell -p`) resolves to the system's flake-pinned nixpkgs.
 
+The desktop is niri with the Noctalia shell. Its bar hides when windows need
+the space, and shows whenever something drops from it. Super is the leader
+key: tap it alone for the Control Center, hold it and the bar peeks out, keep
+holding and niri's shortcuts show (`smudgenix.desktop.leader`).
+
 ## Userland only (any Nix-enabled home)
 
 On macOS, another distro, or anywhere without sudo, use just the home-manager
