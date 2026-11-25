@@ -9,6 +9,7 @@
 local sessions = {} -- by id
 local decisions = { current = {}, briefs = {} } -- what stands, and what agents asked you (smx ai log)
 local stacks = {} -- threads' stacks (smx ai stack)
+local pauses = {} -- each thread's latest: why its agent stopped (smx ai pause)
 local asked = nil -- the questions told about, by id (nil: none yet seen)
 local server = "stopped"
 
@@ -18,7 +19,7 @@ local function publish()
     table.insert(list, session)
   end
   table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
-  noctalia.state.set("agents", { server = server, sessions = list, decisions = decisions, stacks = stacks })
+  noctalia.state.set("agents", { server = server, sessions = list, decisions = decisions, stacks = stacks, pauses = pauses })
 end
 
 -- The focused window's process, from niri's events (nil if none, or not niri).
@@ -175,6 +176,8 @@ local function onLine(line)
     sessions[event.id] = event
   elseif event.type == "stacks" then
     stacks = event.stacks or {}
+  elseif event.type == "pauses" then
+    pauses = event.pauses or {}
   elseif event.type == "decisions" then
     decisions = { current = event.current or {}, briefs = event.briefs or {} }
     -- (A new question is news: it waits on you. Not those there at first.)

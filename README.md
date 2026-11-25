@@ -171,6 +171,15 @@ gave it (`smx ai check <session> [<layer>] --command "<check>"`). In a stack,
 `v` checks the selected layer now and `e` shows its log; a layer whose check
 fails is approved only if you say so (Shift+A, or `approve --anyway`).
 
+An agent ends every turn saying why it stopped: it asked you something, it's
+unsure how to go on, something conflicts with what stands, a failure it can't
+fix, it's as far ahead of you as it may go, it's costing more than it's
+worth, or it's done. Mod+A puts the ones that need you first and shows its
+line on it. How far ahead it may go is a number of layers waiting for your
+approval (3 by default; `smx ai lead <layers>` for the project you're in):
+beyond that, it can't commit another layer. Every pause is kept, in
+`~/.local/share/smudgenix/pauses.jsonl`, to tune that by.
+
 ## smx
 
 `smx`, installed for every user, works on your home, and never needs sudo.

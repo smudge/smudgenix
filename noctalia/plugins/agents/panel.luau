@@ -43,6 +43,7 @@ local layerSelected = 1
 local diffs = {} -- layers' diffs, by commit: { lines, more } (or loading = true)
 local diffAt = 1 -- the diff's line to show
 local stacksBy = {} -- threads' stacks, by thread id (from the last render)
+local pausedBy = {} -- why each thread's agent stopped this turn, by thread id (from the last render)
 local publishing = nil -- what's being approved (or synced), said while it is
 
 -- --- Helpers -----------------------------------------------------------------
@@ -155,6 +156,12 @@ local function threads(agents)
   for _, stack in agents.stacks or {} do
     stacksBy[stack.session] = stack
   end
+  -- (A pause stands for the turn it ended: not once the agent's at it again.)
+  pausedBy = {}
+  for _, pause in agents.pauses or {} do
+    local thread = byId[pause.thread]
+    if thread and thread.state ~= "working" and (pause.time or 0) >= (thread.started or 0) then pausedBy[pause.thread] = pause end
+  end
   local projects, seen = {}, {}
   for _, thread in list do
     if thread.project and not seen[thread.project] then
@@ -201,13 +208,21 @@ local function turn(thread, children, questions)
     if layer.conflict then conflicted += 1 end
     if layer.check and layer.check.state == "failed" then failing += 1 end
   end
+  local pause = pausedBy[thread.id]
+  local why = pause and ({
+    uncertain = "unsure how to go on", conflict = "found a conflict", failing = "stuck on a failure",
+    lead = "waiting for your approvals", appetite = "stopped: it's costing more than it's worth", done = "done",
+  })[pause.reason]
+  if why and (pause.reason == "uncertain" or pause.reason == "conflict" or pause.reason == "failing") then
+    return "you", 0, why
+  end
   if n > 0 then
-    return "you", 1, `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
+    return "you", 1, (why and why .. ": " or "") .. `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
       .. (conflicted > 0 and `, {conflicted} conflicted` or "") .. (approved > 0 and `, {approved} approved` or "")
       .. (failing > 0 and `, {failing} failing {failing == 1 and "its" or "their"} check` or "")
   end
   if thread.unseen then
-    return "you", 2, thread.state == "failed" and "back: it failed" or "back: it's answered"
+    return "you", 2, thread.state == "failed" and "back: it failed" or why or "back: it's answered"
   end
   return "parked", 0, approved > 0 and `{approved} layer{approved == 1 and "" or "s"} with the forge` or "parked"
 end
@@ -358,7 +373,11 @@ local function threadRow(entry, index, children, questions)
   }
   -- Its line: the reply if that's news; else what it's about. (Selected:
   -- both.)
-  local news = thread.last and (thread.unseen or needsYou(thread))
+  local pause = pausedBy[thread.id]
+  if pause and pause.note then
+    table.insert(lines, ui.label({ text = pause.note, fontSize = 11, color = (pause.reason == "done" or pause.reason == "lead") and "on_surface/0.75" or "tertiary", maxLines = 2 }))
+  end
+  local news = thread.last and (thread.unseen or needsYou(thread)) and not pause
   local function say(text, maxLines)
     table.insert(lines, ui.label({ text = text, fontSize = 11, color = "on_surface/0.75", maxLines = maxLines }))
   end
