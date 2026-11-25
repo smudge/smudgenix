@@ -8,9 +8,10 @@
 --   it: its options and the agent's pick, and what already stands there.
 --   Take an option (1–4) or write your own (w), then why, or leave it open
 --   (o); an agent's call you confirm (c), replace (w) or withdraw (x).
--- - Your turn: it needs you (a permission, a question), or it's back: work
---   to review (Enter opens the review: its files, flagged first, each to its
---   diff), an answer, or a failure.
+-- - Your turn: it needs you (a permission, a question), or it's back: layers
+--   to review (Enter opens its stack: bottom first, each layer's diff right
+--   there; a lands up to one, r has it revised), an answer, or a failure.
+--   (Threads from before stacks have a review of their files instead.)
 -- - Away: an agent's at it, in the background.
 -- - Parked: open, waiting for you to pick it up (collapsed to a count).
 --
@@ -39,6 +40,11 @@ local here = nil -- the focused window's folder, when the overlay opened (smx ai
 local submitted = 0 -- when something was last sent (so one Enter can't also open a thread)
 local deciding = nil -- what's open to decide: { brief } or { line }, by id
 local writing = nil -- your line, being written: { stage = "line" | "why", kind, text, why, initial, key }
+local stacking = nil -- the thread whose stack is open, by id
+local layerSelected = 1
+local diffs = {} -- layers' diffs, by commit: { lines, more } (or loading = true)
+local diffAt = 1 -- the diff's line to show
+local stacksBy = {} -- threads' stacks, by thread id (from the last render)
 
 -- --- Helpers -----------------------------------------------------------------
 
@@ -85,6 +91,7 @@ local function inspect(task, path)
   local command = "smx ai diff " .. quote(task.id)
   if path then command ..= " -- " .. quote(path) end
   noctalia.runInTerminal(command)
+  panel.close() -- (so you can read it)
 end
 
 -- A review's latest check (smx ai verify), if any, and what it says.
@@ -170,6 +177,10 @@ local function threads(agents)
       tasks[task.session] = tasks[task.session] or task
     end
   end
+  stacksBy = {}
+  for _, stack in agents.stacks or {} do
+    stacksBy[stack.session] = stack
+  end
   local projects, seen = {}, {}
   for _, thread in list do
     if thread.project and not seen[thread.project] then
@@ -204,6 +215,16 @@ local function turn(thread, children, task, questions)
   if anyChild(thread.id, children, function(s) return s.state == "working" end) then
     return "away", 0, "subagents at work"
   end
+  local stack = stacksBy[thread.id]
+  if stack and #(stack.layers or {}) > 0 then
+    local n, spots, conflicted = #stack.layers, 0, 0
+    for _, layer in stack.layers do
+      spots += #(layer.hotspots or {})
+      if layer.conflict then conflicted += 1 end
+    end
+    return "you", 1, `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
+      .. (conflicted > 0 and `, {conflicted} conflicted` or "")
+  end
   if task and task.state == "in-review" then
     local review = task.review or {}
     local files = type(review.files) == "table" and #review.files or review.files or 0
@@ -221,6 +242,7 @@ end
 
 local function glyphFor(thread, where, task, questions)
   if questions and #questions > 0 then return "help-circle", "tertiary" end
+  if where == "you" and stacksBy[thread.id] and #(stacksBy[thread.id].layers or {}) > 0 then return "stack-2", "secondary" end
   if where == "away" then return "loader-2", "primary" end
   if needsYou(thread) then return "alert-triangle", "tertiary" end
   if where == "you" and task and task.state == "in-review" then return "git-pull-request", "secondary" end
@@ -262,7 +284,11 @@ end
 
 -- Opens a thread: its review, if it has work in review; else its TUI.
 local function enter(thread, task)
-  if task and (task.state == "in-review" or task.state == "deferred") then
+  local stack = stacksBy[thread.id]
+  if stack and #(stack.layers or {}) > 0 then
+    stacking, layerSelected, diffAt = thread.id, 1, 1
+    render()
+  elseif task and (task.state == "in-review" or task.state == "deferred") then
     reviewing = task.id
     fileSelected = 1
     render()
@@ -286,7 +312,7 @@ local function submit(text, inTui)
   composing = nil
   submitted = noctalia.nowMs()
   if c.mode == "reply" and c.thread then
-    run({ "smx", "ai", "reply", c.thread.id, text })
+    run({ "smx", "ai", "reply", c.thread.id, (c.prefix or "") .. text })
   else
     local argv = { "smx", "ai", "new" }
     if c.dir then
@@ -305,7 +331,8 @@ end
 
 -- Closing a thread: at once, or (with work in review) after you decide.
 local function close(thread, task, decision)
-  if task and task.state ~= "revising" and not decision then
+  local stack = stacksBy[thread.id]
+  if ((task and task.state ~= "revising") or (stack and #(stack.layers or {}) > 0)) and not decision then
     confirming = thread
     render()
     return
@@ -327,7 +354,7 @@ local function hints(entry)
     return composing.mode == "reply" and "Enter send  ·  Esc close"
       or "Enter start, in the background  ·  Shift+Enter start, in a TUI  ·  Esc close"
   elseif confirming then
-    return "a accept and close  ·  x discard the review and close  ·  any other key: don't"
+    return "a land it (or accept it) and close  ·  x set it aside and close  ·  any other key: don't"
   elseif entry and entry.parked then
     return "Enter or → show parked  ·  n new thread  ·  Tab project"
   elseif entry and entry.decide then
@@ -382,9 +409,9 @@ local function threadRow(entry, index, children, tasks, questions)
   end
   if confirming and confirming.id == thread.id then
     table.insert(lines, ui.row({ gap = 6 }, {
-      ui.label({ text = "It has work in review:", fontSize = 12, color = "tertiary" }),
-      ui.button({ text = "Accept and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, task, "accept") end }),
-      ui.button({ text = "Discard the review, and close", variant = "outline", controlSize = "sm", onClick = function() close(thread, task, "discard") end }),
+      ui.label({ text = stacksBy[thread.id] and "It has layers not landed:" or "It has work in review:", fontSize = 12, color = "tertiary" }),
+      ui.button({ text = stacksBy[thread.id] and "Land them all, and close" or "Accept and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, task, "accept") end }),
+      ui.button({ text = stacksBy[thread.id] and "Set them aside, and close" or "Discard the review, and close", variant = "outline", controlSize = "sm", onClick = function() close(thread, task, "discard") end }),
     }))
   end
 
@@ -479,6 +506,119 @@ local function renderReview(task)
     problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "file-" .. fileSelected }, rows),
     ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  v check  ·  e its log  ·  r reply  ·  z park  ·  ← back",
+      fontSize = 11, color = "on_surface/0.5" }),
+  }))
+end
+
+-- --- Stacks ------------------------------------------------------------------
+
+local maxDiffLines = 600
+
+-- A layer's diff (smx ai stack diff), fetched once: commits don't change.
+local function loadDiff(stack, layer)
+  if not layer or diffs[layer.commit] then return end
+  diffs[layer.commit] = { loading = true }
+  noctalia.runAsync({ "smx", "ai", "stack", "diff", stack.session, layer.change }, function(result)
+    if result.exitCode ~= 0 then
+      diffs[layer.commit] = { lines = { "(couldn't show it: " .. ((result.stderr or ""):gsub("%s+$", "")) .. ")" }, more = 0 }
+    else
+      local lines, total = {}, 0
+      for line in ((result.stdout or "") .. "\n"):gmatch("(.-)\n") do
+        total += 1
+        if total <= maxDiffLines then table.insert(lines, line) end
+      end
+      if lines[#lines] == "" then table.remove(lines) end
+      diffs[layer.commit] = { lines = lines, more = math.max(0, total - maxDiffLines) }
+    end
+    render()
+  end)
+end
+
+local function diffLine(line, index)
+  local color, weight = "on_surface/0.8", nil
+  if line:sub(1, 4) == "diff" then
+    color, weight = "on_surface", "bold"
+  elseif line:sub(1, 3) == "+++" or line:sub(1, 3) == "---" or line:sub(1, 5) == "index" or line:sub(1, 3) == "new" or line:sub(1, 7) == "deleted" then
+    color = "on_surface/0.45"
+  elseif line:sub(1, 2) == "@@" then
+    color = "primary/0.8"
+  elseif line:sub(1, 1) == "+" then
+    color = "secondary"
+  elseif line:sub(1, 1) == "-" then
+    color = "error"
+  end
+  return ui.label({ key = "d-" .. index, text = line == "" and " " or line, fontSize = 11, fontWeight = weight, color = color, maxLines = 1 })
+end
+
+-- A thread's stack, reviewed from the bottom (what lands first): each
+-- layer's purpose and size, and the selected one's hotspots and diff, here.
+local function renderStack(agents, stack)
+  local thread = sessionById(agents, stack.session)
+  layerSelected = math.clamp(layerSelected, 1, math.max(1, #stack.layers))
+  local selectedLayer = stack.layers[layerSelected]
+  loadDiff(stack, selectedLayer)
+
+  local rows = {}
+  for i, layer in stack.layers do
+    local spots = #(layer.hotspots or {})
+    local facts = { `{#(layer.files or {})} file{#(layer.files or {}) == 1 and "" or "s"}`, `+{layer.added or 0} −{layer.removed or 0}` }
+    if spots > 0 then table.insert(facts, `{spots} flagged`) end
+    if layer.conflict then table.insert(facts, "conflicted") end
+    if stack.revising == layer.change then table.insert(facts, "being revised") end
+    table.insert(rows, ui.row({
+      key = "layer-" .. i, gap = 8, padding = 6, radius = 6, align = "center",
+      fill = i == layerSelected and "primary/0.15" or nil,
+      onClick = function() layerSelected = i; diffAt = 1; render() end,
+    }, {
+      ui.label({ text = tostring(i), fontSize = 12, fontWeight = "bold", color = "on_surface/0.5" }),
+      ui.label({ text = layer.title ~= "" and layer.title or "(no purpose given)", maxLines = 1, flexGrow = 1,
+        color = layer.conflict and "error" or "on_surface" }),
+      ui.label({ text = table.concat(facts, "  ·  "), fontSize = 11, color = spots > 0 and "tertiary" or "on_surface/0.55" }),
+    }))
+  end
+  if stack.uncommitted then
+    table.insert(rows, ui.label({ text = "And changes it hasn't committed yet.", fontSize = 11, color = "on_surface/0.5" }))
+  end
+
+  -- The selected layer: what's flagged, its calls still to settle, its diff.
+  local detail = {}
+  if selectedLayer then
+    for _, spot in selectedLayer.hotspots or {} do
+      table.insert(detail, ui.label({ text = `⚑ {spot.path}: {spot.why}`, fontSize = 11, color = "tertiary", maxLines = 2 }))
+    end
+    for _, line in (agents.decisions or {}).current or {} do
+      if line.provisional and line.layer == selectedLayer.change then
+        table.insert(detail, ui.label({ text = `An agent's call in it, to settle first (in To decide): {line.text}`, fontSize = 11, color = "secondary", maxLines = 2 }))
+      end
+    end
+    local diff = diffs[selectedLayer.commit]
+    if not diff or diff.loading then
+      table.insert(detail, ui.label({ text = "Loading its diff…", fontSize = 11, color = "on_surface/0.5" }))
+    else
+      for i, line in diff.lines do table.insert(detail, diffLine(line, i)) end
+      if diff.more > 0 then
+        table.insert(detail, ui.label({ text = `… {diff.more} more lines: Enter shows it all, in a terminal`, fontSize = 11, color = "on_surface/0.5" }))
+      end
+    end
+  end
+
+  local said = { stack.project, "on " .. stack.trunk }
+  if thread and thread.state == "working" then table.insert(said, "its agent is at work") end
+  panel.render(ui.column({ padding = 14, gap = 6 }, {
+    ui.row({ gap = 8, align = "center" }, {
+      ui.row({ onClick = function() stacking = nil; render() end }, { ui.glyph({ name = "chevron-left", size = 16, color = "on_surface/0.6" }) }),
+      ui.label({ text = thread and thread.title or "(a thread)", fontSize = 15, fontWeight = "bold", maxLines = 1, flexGrow = 1 }),
+    }),
+    ui.label({ text = table.concat(said, "  ·  ") .. "  ·  bottom first: it lands first", fontSize = 11, color = "on_surface/0.6" }),
+    problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
+    composing and ui.input({
+      key = composing.key, placeholder = composing.placeholder or "…", focus = true,
+      onChange = function(text) if composing then composing.text = text end end,
+      onSubmit = function(text) submit(text, false) end,
+    }) or ui.box({ height = 0 }),
+    ui.column({ gap = 2 }, rows),
+    ui.scroll({ flexGrow = 1, gap = 0, revealKey = "d-" .. diffAt }, detail),
+    ui.label({ text = "j/k layer  ·  Shift+J/K scroll  ·  a land up to it  ·  r revise it  ·  Enter full diff  ·  ← back",
       fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
@@ -647,6 +787,14 @@ function render()
   local list, children, tasks, projects = threads(agents)
   local questions = asking(agents)
 
+  if stacking then
+    if stacksBy[stacking] and #(stacksBy[stacking].layers or {}) > 0 then
+      renderStack(agents, stacksBy[stacking])
+      return
+    end
+    stacking = nil -- (all landed, or closed)
+  end
+
   if deciding then
     local d = stillToDecide(agents, deciding)
     if d then
@@ -787,7 +935,7 @@ function onOpen(context)
   open = true
   selected = 1
   reviewing, composing, confirming, problem, parkedOpen = nil, nil, nil, nil, false
-  deciding, writing = nil, nil
+  deciding, writing, stacking = nil, nil, nil
   local agents = noctalia.state.get("agents") or {}
   if type(context) == "string" and context ~= "" then
     for _, session in agents.sessions or {} do
@@ -891,6 +1039,41 @@ function onKey(chord, pressed)
       close(thread, tasks[thread.id], "accept")
     elseif chord == "x" then
       close(thread, tasks[thread.id], "discard")
+    end
+    render()
+    return
+  end
+
+  -- In a stack: layers from the bottom; land up to one, or have it revised.
+  if stacking then
+    local stack = stacksBy[stacking]
+    if not stack or #(stack.layers or {}) == 0 then stacking = nil; render(); return end
+    local layer = stack.layers[math.clamp(layerSelected, 1, #stack.layers)]
+    if chord == "Down" or chord == "j" then
+      layerSelected, diffAt = math.min(layerSelected + 1, #stack.layers), 1
+    elseif chord == "Up" or chord == "k" then
+      layerSelected, diffAt = math.max(layerSelected - 1, 1), 1
+    elseif chord == "Shift+J" or chord == "Shift+j" then
+      local diff = diffs[layer.commit]
+      diffAt = math.min(diffAt + 20, math.max(1, diff and diff.lines and #diff.lines or 1))
+    elseif chord == "Shift+K" or chord == "Shift+k" then
+      diffAt = math.max(diffAt - 20, 1)
+    elseif chord == "Left" or chord == "h" then
+      stacking = nil
+    elseif chord == "a" then
+      run({ "smx", "ai", "land", stack.session, layer.change }, function() layerSelected, diffAt = 1, 1 end)
+    elseif chord == "r" then
+      local thread = sessionById(agents, stack.session)
+      if thread then
+        compose("reply", thread)
+        composing.placeholder = `What to change in layer {layerSelected}: {layer.title}`
+        composing.prefix = `Revise layer {layerSelected} ("{layer.title}", change {layer.change:sub(1, 12)}): call smudgenix_revise with it, change it, then smudgenix_commit. What to change: `
+      end
+      return
+    elseif chord == "Return" then
+      noctalia.runInTerminal("smx ai stack diff " .. quote(stack.session) .. " " .. quote(layer.change) .. " | less -R")
+      panel.close()
+      return
     end
     render()
     return
