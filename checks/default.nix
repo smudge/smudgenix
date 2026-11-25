@@ -33,7 +33,7 @@ let
     }];
   };
   # smx ai's normalizer, on recorded (and made-up) server events, its
-  # review hotspots, on made-up changes, its history, on made-up sessions,
+  # layers' hotspots, on made-up changes, its history, on made-up sessions,
   # and its decision log's fold, on a made-up log.
   ai = pkgs.runCommand "smx-ai-tests" { nativeBuildInputs = [ pkgs.jq pkgs.diffutils ]; } ''
     for events in ${../ai/tests}/*.events.jsonl; do

@@ -1,13 +1,12 @@
 --!nonstrict
 -- Follows `smx ai watch`, publishing what agents are doing ("agents": the
--- server's state, its sessions, subagents' included, smx ai's tasks, and the
+-- server's state, its sessions, subagents' included, threads' stacks, and the
 -- decision log: what stands, and what agents asked you) for
 -- the widget and panel, and saying so when one needs you or fails, unless
 -- you're looking at it (its TUI's window is focused). Finishing isn't urgent:
 -- it waits in the overlay, to review.
 
 local sessions = {} -- by id
-local tasks = {} -- smx ai's, newest first
 local decisions = { current = {}, briefs = {} } -- what stands, and what agents asked you (smx ai log)
 local stacks = {} -- threads' stacks (smx ai stack)
 local asked = nil -- the questions told about, by id (nil: none yet seen)
@@ -19,7 +18,7 @@ local function publish()
     table.insert(list, session)
   end
   table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
-  noctalia.state.set("agents", { server = server, sessions = list, tasks = tasks, decisions = decisions, stacks = stacks })
+  noctalia.state.set("agents", { server = server, sessions = list, decisions = decisions, stacks = stacks })
 end
 
 -- The focused window's process, from niri's events (nil if none, or not niri).
@@ -174,8 +173,6 @@ local function onLine(line)
   elseif event.type == "session" then
     tell(sessions[event.id], event)
     sessions[event.id] = event
-  elseif event.type == "tasks" then
-    tasks = event.tasks or {}
   elseif event.type == "stacks" then
     stacks = event.stacks or {}
   elseif event.type == "decisions" then

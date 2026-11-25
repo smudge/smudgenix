@@ -1,13 +1,12 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
-# first event), `smx.tuis` (opencode's TUIs open now), `smx.tasks`,
+# first event), `smx.tuis` (opencode's TUIs open now),
 # `smx.decisions`, `smx.stacks` and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
 #   {"v":1,"type":"removed","id":…}
 #   {"v":1,"type":"server","state":"up"|"stopped"|"down"}
-#   {"v":1,"type":"tasks","tasks":[<task>…]}   (smx ai's; see smx ai task --json)
 #   {"v":1,"type":"decisions","current":[…],"briefs":[…]}   (see smx ai log --json)
 #   {"v":1,"type":"stacks","stacks":[…]}   (threads' stacks; see smx ai stack --json)
 #
@@ -112,8 +111,6 @@ foreach inputs as $e ({sessions: {}, tuis: [], emit: []};
     elif $e.type == "smx.tuis" then
       .tuis = $e.tuis
       | .emit = [.sessions[] | select(public($tuis) != public($e.tuis)) | {v: 1, type: "session"} + public($e.tuis)]
-    elif $e.type == "smx.tasks" then
-      .emit = [{v: 1, type: "tasks", tasks: $e.tasks}]
     elif $e.type == "smx.decisions" then
       .emit = [{v: 1, type: "decisions", current: $e.current, briefs: $e.briefs}]
     elif $e.type == "smx.stacks" then

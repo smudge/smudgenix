@@ -19,8 +19,8 @@ local function render(agents)
     + #((agents.decisions or {}).briefs or {}) -- (questions agents asked you, in the decision log)
   -- (A subagent's work is its parent's; what one needs from you is yours.)
   local working = count(sessions, function(s) return s.parent == nil and s.state == "working" end)
-  -- To review: tasks in review, and sessions finished since you looked.
-  local review = count(agents.tasks or {}, function(t) return t.state == "in-review" end)
+  -- To review: threads with layers, and sessions finished since you looked.
+  local review = count(agents.stacks or {}, function(s) return #(s.layers or {}) > 0 end)
     + count(sessions, function(s) return s.parent == nil and s.unseen end)
 
   if agents.server == "down" then

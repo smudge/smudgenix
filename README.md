@@ -106,7 +106,7 @@ Shift+Enter: in a TUI), `r` tells one more, `z` parks one. `smx ai new`,
 `reply`, `park`, `close`, `status`, `watch` and `open` do the same from a
 terminal. Closing a thread archives its session (nothing's deleted), and
 `smx ai history` shows your threads day by day, closed ones too: when, in
-which project, how they ended (their review's outcome) and what they cost,
+which project, how they ended (what came of their stacks) and what they cost,
 subagents included (`--days`, `--since`, `--project`, `--json`).
 
 What you decide goes in a decision log: one line each, like a changelog, kept
@@ -140,7 +140,9 @@ land on its own, the least controversial first. Agents commit and revise
 layers only through smudgenix's OpenCode plugin: their own commands can't
 change history. Mod+A shows a thread with layers as "to review". Enter opens
 its stack, bottom first: each layer's purpose and size, and the selected
-one's hotspots and diff, right there (Shift+J/K scrolls it; Enter opens it
+one's diff and the places in it worth a closer look (dependencies, deleted or
+skipped tests, migrations, CI, security-sensitive files and lines, large
+changes), right there (Shift+J/K scrolls it; Enter opens it
 all in a terminal). `a` lands it and every layer below it on your trunk (a
 fast-forward, in your checkout if it's on it: your uncommitted work stays).
 `r` tells the agent what to change in it; the layers above restack on the
@@ -149,26 +151,6 @@ you settle the call. `smx ai stack <session>`, `stack diff <session> <layer>`
 and `land <session> <layer>` do the same from a terminal. Closing a thread
 lands its layers (`--accept`) or sets them aside (`--discard`: still in jj's
 history, never reverted), and removes its workspace.
-
-A session started some other way (in your checkout, say) is reviewed whole
-instead: when it finishes having changed its repository, its work goes to review by itself
-(`smx ai review <session>`, or `p` on it in Mod+A, does it any time): the
-change, frozen as a commit of the working tree (untracked files too; your
-branch and files untouched), from where it started (or its last accepted
-review ended); the places worth a closer look (dependencies, deleted or
-skipped tests, migrations, CI, security-sensitive files and lines, large
-changes); and what the agent says it did, marked as its claim. `smx ai diff <task>` shows it; `accept`,
-`revise <task> "<what to change>"` (back to its session) or `defer` decide.
-A review that's changed since it was frozen is stale, and can't be accepted
-until you review it again. Tasks live in `~/.local/share/smudgenix/tasks`,
-which agents' commands can't change.
-
-`smx ai verify <task>` (`v` in a review) adds evidence, rather than the
-agent's word: it runs the project's check on exactly the frozen revision, in
-a fresh copy and agents' sandbox (it's their code), and records whether it
-passed, with its log (`e`). The check is guessed from the project's files
-(`nix flake check`, `npm test`, `cargo test`, `go test ./...`, `make check`,
-`pytest`…), or the one you last gave it with `--command "<check>"`.
 
 ## smx
 

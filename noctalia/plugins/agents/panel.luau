@@ -11,7 +11,6 @@
 -- - Your turn: it needs you (a permission, a question), or it's back: layers
 --   to review (Enter opens its stack: bottom first, each layer's diff right
 --   there; a lands up to one, r has it revised), an answer, or a failure.
---   (Threads from before stacks have a review of their files instead.)
 -- - Away: an agent's at it, in the background.
 -- - Parked: open, waiting for you to pick it up (collapsed to a count).
 --
@@ -31,10 +30,7 @@ local scope = nil -- a project's name, or nil for all
 local scopeChosen = false -- (by you, so the focused window's doesn't override it)
 local composing = nil -- { mode = "new" | "reply", thread?, text, key }
 local composeCount = 0
-local confirming = nil -- a thread being closed with work in review
-local reviewing = nil -- the task whose review is open, by id
-local fileSelected = 1
-local reviewFiles = {} -- the open review's files, in order
+local confirming = nil -- a thread being closed with layers not landed
 local problem = nil -- the last `smx ai` failure, shown until the next key
 local here = nil -- the focused window's folder, when the overlay opened (smx ai context)
 local submitted = 0 -- when something was last sent (so one Enter can't also open a thread)
@@ -84,25 +80,6 @@ local function chip(text, on)
   return ui.row({ padding = 4, radius = 6, fill = on and "primary/0.25" or "on_surface/0.08" }, {
     ui.label({ text = text, fontSize = 10, color = on and "on_surface" or "on_surface/0.7", maxLines = 1 }),
   })
-end
-
--- A task's change, or one file of it, in a terminal (smx ai diff).
-local function inspect(task, path)
-  local command = "smx ai diff " .. quote(task.id)
-  if path then command ..= " -- " .. quote(path) end
-  noctalia.runInTerminal(command)
-  panel.close() -- (so you can read it)
-end
-
--- A review's latest check (smx ai verify), if any, and what it says.
-local function lastCheck(task)
-  local evidence = task and task.review and task.review.evidence or {}
-  local check = evidence[#evidence]
-  if not check then return nil, nil end
-  if check.exit == 0 then return check, "passed" end
-  if check.exit ~= nil then return check, "failed" end
-  if check.interrupted then return check, "interrupted" end
-  return check, "running"
 end
 
 -- --- Decisions ---------------------------------------------------------------
@@ -156,8 +133,8 @@ end
 
 -- --- Threads -----------------------------------------------------------------
 
--- Your threads (top-level sessions), each with its subagents and its open
--- task, if any; and the projects they're in, most recent first.
+-- Your threads (top-level sessions), each with its subagents; and the
+-- projects they're in, most recent first.
 local function threads(agents)
   local byId, children, list = {}, {}, {}
   for _, session in agents.sessions or {} do
@@ -171,12 +148,6 @@ local function threads(agents)
       table.insert(list, session)
     end
   end
-  local tasks = {}
-  for _, task in agents.tasks or {} do
-    if task.state == "in-review" or task.state == "revising" or task.state == "deferred" then
-      tasks[task.session] = tasks[task.session] or task
-    end
-  end
   stacksBy = {}
   for _, stack in agents.stacks or {} do
     stacksBy[stack.session] = stack
@@ -188,7 +159,7 @@ local function threads(agents)
       table.insert(projects, { name = thread.project, dir = thread.dir })
     end
   end
-  return list, children, tasks, projects
+  return list, children, projects
 end
 
 -- Whether any of a thread's subagents (or theirs) is so.
@@ -201,7 +172,7 @@ end
 
 -- Whose turn a thread is, and what that means: "you" (needs you, or back),
 -- "away" (at work), or "parked"; with a word on it.
-local function turn(thread, children, task, questions)
+local function turn(thread, children, questions)
   if questions and #questions > 0 then
     return "you", 0, #questions == 1 and "asks you to decide" or `asks you to decide {#questions} things`
   end
@@ -209,7 +180,7 @@ local function turn(thread, children, task, questions)
     local asking = needsYou(thread) and thread or nil
     return "you", 0, asking and asking.state == "needs-input" and "asks you" or "needs your permission"
   end
-  if thread.state == "working" or (task and task.state == "revising" and thread.state == "working") then
+  if thread.state == "working" then
     return "away", 0, "at work"
   end
   if anyChild(thread.id, children, function(s) return s.state == "working" end) then
@@ -225,27 +196,17 @@ local function turn(thread, children, task, questions)
     return "you", 1, `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
       .. (conflicted > 0 and `, {conflicted} conflicted` or "")
   end
-  if task and task.state == "in-review" then
-    local review = task.review or {}
-    local files = type(review.files) == "table" and #review.files or review.files or 0
-    local spots = #(review.hotspots or {})
-    local _, checked = lastCheck(task)
-    return "you", 1, `back: {files} file{files == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
-      .. (checked == "passed" and ", checks pass" or checked == "failed" and ", its check failed" or checked == "running" and ", checking" or "")
-      .. (task.stale and " (stale)" or "")
-  end
   if thread.unseen then
     return "you", 2, thread.state == "failed" and "back: it failed" or "back: it's answered"
   end
-  return "parked", 0, task and task.state == "deferred" and "parked, with work to review" or "parked"
+  return "parked", 0, "parked"
 end
 
-local function glyphFor(thread, where, task, questions)
+local function glyphFor(thread, where, questions)
   if questions and #questions > 0 then return "help-circle", "tertiary" end
   if where == "you" and stacksBy[thread.id] and #(stacksBy[thread.id].layers or {}) > 0 then return "stack-2", "secondary" end
   if where == "away" then return "loader-2", "primary" end
   if needsYou(thread) then return "alert-triangle", "tertiary" end
-  if where == "you" and task and task.state == "in-review" then return "git-pull-request", "secondary" end
   if where == "you" and thread.state == "failed" then return "x", "error" end
   if where == "you" then return "corner-down-left", "secondary" end
   return "point", "on_surface/0.5"
@@ -282,15 +243,11 @@ local function asks(entry)
   return entry and entry.thread and entry.thread.permissions and entry.thread.permissions[1]
 end
 
--- Opens a thread: its review, if it has work in review; else its TUI.
-local function enter(thread, task)
+-- Opens a thread: its stack, if it has layers to review; else its TUI.
+local function enter(thread)
   local stack = stacksBy[thread.id]
   if stack and #(stack.layers or {}) > 0 then
     stacking, layerSelected, diffAt = thread.id, 1, 1
-    render()
-  elseif task and (task.state == "in-review" or task.state == "deferred") then
-    reviewing = task.id
-    fileSelected = 1
     render()
   else
     noctalia.runAsync({ "smx", "ai", "open", thread.id })
@@ -329,10 +286,10 @@ local function submit(text, inTui)
   render()
 end
 
--- Closing a thread: at once, or (with work in review) after you decide.
-local function close(thread, task, decision)
+-- Closing a thread: at once, or (with layers not landed) after you decide.
+local function close(thread, decision)
   local stack = stacksBy[thread.id]
-  if ((task and task.state ~= "revising") or (stack and #(stack.layers or {}) > 0)) and not decision then
+  if stack and #(stack.layers or {}) > 0 and not decision then
     confirming = thread
     render()
     return
@@ -367,11 +324,10 @@ local function hints(entry)
   return "n new thread  ·  Tab project  ·  Esc close"
 end
 
-local function threadRow(entry, index, children, tasks, questions)
+local function threadRow(entry, index, children, questions)
   local thread = entry.thread
-  local task = tasks[thread.id]
-  local where, _, says = turn(thread, children, task, questions[thread.id])
-  local glyph, color = glyphFor(thread, where, task, questions[thread.id])
+  local where, _, says = turn(thread, children, questions[thread.id])
+  local glyph, color = glyphFor(thread, where, questions[thread.id])
   local isSelected = index == selected
 
   local details = { says }
@@ -409,9 +365,9 @@ local function threadRow(entry, index, children, tasks, questions)
   end
   if confirming and confirming.id == thread.id then
     table.insert(lines, ui.row({ gap = 6 }, {
-      ui.label({ text = stacksBy[thread.id] and "It has layers not landed:" or "It has work in review:", fontSize = 12, color = "tertiary" }),
-      ui.button({ text = stacksBy[thread.id] and "Land them all, and close" or "Accept and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, task, "accept") end }),
-      ui.button({ text = stacksBy[thread.id] and "Set them aside, and close" or "Discard the review, and close", variant = "outline", controlSize = "sm", onClick = function() close(thread, task, "discard") end }),
+      ui.label({ text = "It has layers not landed:", fontSize = 12, color = "tertiary" }),
+      ui.button({ text = "Land them all, and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, "accept") end }),
+      ui.button({ text = "Set them aside, and close", variant = "outline", controlSize = "sm", onClick = function() close(thread, "discard") end }),
     }))
   end
 
@@ -425,89 +381,9 @@ local function threadRow(entry, index, children, tasks, questions)
     fill = isSelected and "primary/0.15" or nil,
     onClick = function()
       selected = index
-      enter(thread, task)
+      enter(thread)
     end,
   }, parts)
-end
-
--- One task's review: a summary, what it says it did (one line), and its
--- files, flagged ones first, each to open.
-local function renderReview(task)
-  local review = task.review or {}
-  local byPath = {}
-  for _, spot in review.hotspots or {} do
-    byPath[spot.path] = byPath[spot.path] or {}
-    if not table.find(byPath[spot.path], spot.why) then table.insert(byPath[spot.path], spot.why) end
-  end
-  reviewFiles = {}
-  local flagged, rest = {}, {}
-  for _, file in (type(review.files) == "table" and review.files) or {} do
-    table.insert(byPath[file.path] and flagged or rest, file)
-  end
-  for _, file in flagged do table.insert(reviewFiles, file) end
-  for _, file in rest do table.insert(reviewFiles, file) end
-  fileSelected = math.clamp(fileSelected, 1, math.max(1, #reviewFiles))
-
-  local added, removed = 0, 0
-  for _, file in reviewFiles do
-    added += file.added or 0
-    removed += file.removed or 0
-  end
-  local summary = { `{#reviewFiles} file{#reviewFiles == 1 and "" or "s"}, +{added} −{removed}`,
-    #flagged == 0 and "nothing flagged" or `{#flagged} flagged` }
-  if (review.round or 1) > 1 then table.insert(summary, `round {review.round}`) end
-  if task.project then table.insert(summary, task.project) end
-
-  local rows = {}
-  if task.stale then
-    table.insert(rows, ui.label({ text = "Stale: it's changed since this was frozen. p reviews it again.", fontSize = 12, color = "tertiary" }))
-  end
-  -- Evidence (by smx ai, on this revision), apart from what it says.
-  local check, checked = lastCheck(task)
-  local said = ({
-    passed = check and { `✓ Its check passes on this revision: {check.command}`, "secondary" },
-    failed = check and { `✗ Its check failed (exit {check.exit}): {check.command}. e shows its log; v runs it again.`, "error" },
-    interrupted = check and { `Its check was interrupted: {check.command}. v runs it again.`, "tertiary" },
-    running = check and { `Checking: {check.command}…`, "primary" },
-  })[checked or ""] or { "Not checked yet: v runs the project's check on this revision.", "on_surface/0.6" }
-  table.insert(rows, ui.label({ text = said[1], fontSize = 12, color = said[2], maxLines = 2 }))
-  if review.outcome and review.outcome.text then
-    table.insert(rows, ui.label({ text = "It says: " .. (review.outcome.text:gsub("%s+", " ")), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }))
-  end
-  for index, file in reviewFiles do
-    local whys = byPath[file.path]
-    local lines = {
-      ui.row({ gap = 8, align = "center" }, {
-        ui.label({ text = file.status or "M", fontSize = 11, color = "on_surface/0.5" }),
-        ui.label({ text = file.path, maxLines = 1, flexGrow = 1 }),
-        ui.label({ text = `+{file.added or 0} −{file.removed or 0}`, fontSize = 11, color = "on_surface/0.5" }),
-      }),
-    }
-    for _, why in whys or {} do
-      table.insert(lines, ui.label({ text = why, fontSize = 11, color = "tertiary", maxLines = 1 }))
-    end
-    table.insert(rows, ui.row({
-      key = "file-" .. index,
-      gap = 8, padding = 6, radius = 6, align = "center",
-      fill = index == fileSelected and "primary/0.15" or nil,
-      onClick = function() inspect(task, file.path) end,
-    }, {
-      ui.glyph({ name = whys and "alert-triangle" or "file", size = 14, color = whys and "tertiary" or "on_surface/0.5" }),
-      ui.column({ gap = 2, flexGrow = 1 }, lines),
-    }))
-  end
-
-  panel.render(ui.column({ padding = 14, gap = 6 }, {
-    ui.row({ gap = 8, align = "center" }, {
-      ui.row({ onClick = function() reviewing = nil; render() end }, { ui.glyph({ name = "chevron-left", size = 16, color = "on_surface/0.6" }) }),
-      ui.label({ text = task.title or "(untitled)", fontSize = 15, fontWeight = "bold", maxLines = 1, flexGrow = 1 }),
-    }),
-    ui.label({ text = table.concat(summary, "  ·  "), fontSize = 11, color = "on_surface/0.6" }),
-    problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
-    ui.scroll({ flexGrow = 1, gap = 2, revealKey = "file-" .. fileSelected }, rows),
-    ui.label({ text = (task.stale and "p review again" or "a accept") .. "  ·  Enter its diff  ·  v check  ·  e its log  ·  r reply  ·  z park  ·  ← back",
-      fontSize = 11, color = "on_surface/0.5" }),
-  }))
 end
 
 -- --- Stacks ------------------------------------------------------------------
@@ -784,7 +660,7 @@ end
 function render()
   if not open then return end
   local agents = noctalia.state.get("agents") or { server = "stopped", sessions = {} }
-  local list, children, tasks, projects = threads(agents)
+  local list, children, projects = threads(agents)
   local questions = asking(agents)
 
   if stacking then
@@ -804,22 +680,13 @@ function render()
     deciding, writing = nil, nil
   end
 
-  if reviewing then
-    for _, task in agents.tasks or {} do
-      if task.id == reviewing then
-        renderReview(task)
-        return
-      end
-    end
-    reviewing = nil -- (gone: accepted elsewhere, say)
-  end
 
   -- By whose turn, in the project.
   local yours, away, parked = {}, {}, {}
   local order = {}
   for _, thread in list do
     if not scope or thread.project == scope then
-      local where, rank = turn(thread, children, tasks[thread.id], questions[thread.id])
+      local where, rank = turn(thread, children, questions[thread.id])
       order[thread.id] = rank
       table.insert(where == "you" and yours or where == "away" and away or parked, thread)
     end
@@ -835,7 +702,7 @@ function render()
   local function add(thread, depth, parent)
     table.insert(shown, { thread = thread, depth = depth, parent = parent })
     local index = #shown
-    table.insert(rows, threadRow(shown[index], index, children, tasks, questions))
+    table.insert(rows, threadRow(shown[index], index, children, questions))
     local showKids = expanded[thread.id]
     if showKids == nil then showKids = anyChild(thread.id, children, needsYou) end
     if showKids then
@@ -934,7 +801,7 @@ end
 function onOpen(context)
   open = true
   selected = 1
-  reviewing, composing, confirming, problem, parkedOpen = nil, nil, nil, nil, false
+  composing, confirming, problem, parkedOpen = nil, nil, nil, false
   deciding, writing, stacking = nil, nil, nil
   local agents = noctalia.state.get("agents") or {}
   if type(context) == "string" and context ~= "" then
@@ -970,14 +837,14 @@ end
 
 local function current()
   local agents = noctalia.state.get("agents") or {}
-  local _, children, tasks, projects = threads(agents)
-  return agents, children, tasks, projects
+  local _, children, projects = threads(agents)
+  return agents, children, projects
 end
 
 function onKey(chord, pressed)
   if not (pressed == true or pressed == "true") then return end
   problem = nil
-  local agents, children, tasks, projects = current()
+  local agents, children, projects = current()
 
   -- Composing: Enter sends (in the background); Shift+Enter, a new thread in
   -- a TUI. (Printable keys go to the field, not here.)
@@ -1031,14 +898,14 @@ function onKey(chord, pressed)
     return
   end
 
-  -- Closing with work in review: accept, discard, or don't.
+  -- Closing with layers not landed: land them, set them aside, or don't.
   if confirming then
     local thread = confirming
     confirming = nil
     if chord == "a" then
-      close(thread, tasks[thread.id], "accept")
+      close(thread, "accept")
     elseif chord == "x" then
-      close(thread, tasks[thread.id], "discard")
+      close(thread, "discard")
     end
     render()
     return
@@ -1079,46 +946,6 @@ function onKey(chord, pressed)
     return
   end
 
-  -- In a review.
-  if reviewing then
-    local task = nil
-    for _, t in agents.tasks or {} do
-      if t.id == reviewing then task = t end
-    end
-    if not task then reviewing = nil; render(); return end
-    if chord == "Down" or chord == "j" then
-      fileSelected = math.min(fileSelected + 1, math.max(1, #reviewFiles))
-    elseif chord == "Up" or chord == "k" then
-      fileSelected = math.max(fileSelected - 1, 1)
-    elseif chord == "Left" or chord == "h" then
-      reviewing = nil
-    elseif chord == "Return" then
-      if reviewFiles[fileSelected] then inspect(task, reviewFiles[fileSelected].path) end
-      return
-    elseif chord == "a" then
-      run({ "smx", "ai", "accept", task.id })
-      reviewing = nil
-    elseif chord == "z" then
-      run({ "smx", "ai", "park", task.session })
-      reviewing = nil
-    elseif chord == "p" then
-      run({ "smx", "ai", "review", task.session })
-    elseif chord == "v" then
-      run({ "smx", "ai", "verify", task.id, "--json" })
-    elseif chord == "e" then
-      local check = lastCheck(task)
-      if check and check.log then noctalia.runInTerminal("less +G " .. quote(check.log)) end
-      return
-    elseif chord == "r" then
-      reviewing = nil
-      for _, session in agents.sessions or {} do
-        if session.id == task.session then compose("reply", session) end
-      end
-      return
-    end
-    render()
-    return
-  end
 
   -- (The Enter that just sent something, reaching here too.)
   if chord == "Return" and noctalia.nowMs() - submitted < 400 then return end
@@ -1162,7 +989,7 @@ function onKey(chord, pressed)
     answer(asks(entry), chord == "d" and "deny" or chord == "a" and "once" or "always")
     return
   elseif chord == "Return" then
-    enter(thread, tasks[thread.id])
+    enter(thread)
     return
   elseif chord == "r" then
     compose("reply", thread)
@@ -1170,10 +997,8 @@ function onKey(chord, pressed)
   elseif chord == "z" then
     run({ "smx", "ai", "park", thread.id })
   elseif chord == "c" then
-    close(thread, tasks[thread.id], nil)
+    close(thread, nil)
     return
-  elseif chord == "p" then
-    run({ "smx", "ai", "review", thread.id }) -- (review it now)
   elseif chord == "Right" or chord == "l" then
     if children[thread.id] then expanded[thread.id] = true end
   elseif chord == "Left" or chord == "h" then

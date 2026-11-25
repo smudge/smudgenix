@@ -15,4 +15,3 @@
 {"created":1795400020000,"type":"session.execution.started","data":{"sessionID":"ses_d"}}
 {"created":1795400030000,"type":"permission.asked","data":{"id":"per_c","sessionID":"ses_d","action":"shell","resources":["make test"],"save":["make *"],"cwd":"/home/example/src/old/sub"}}
 {"created":1795400031000,"type":"permission.replied","data":{"sessionID":"ses_d","requestID":"per_c","reply":"once"}}
-{"type":"smx.tasks","tasks":[{"v":1,"id":"tsk_a","title":"Fix the parser","state":"in-review","stale":null,"review":{"round":1,"hotspots":[],"files":2}}]}
