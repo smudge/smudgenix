@@ -54,10 +54,14 @@ Agents (OpenCode), as part of the desktop.
   stack <session> [--json] A thread's stack: its layers, bottom first
   stack diff <session> <layer>
                           A layer's change
-  approve <session> <layer>
+  approve <session> <layer> [--anyway]
                           Publish it, and every layer below it, to your
                           forge: a branch and a pull request each, chained
                           (never on your trunk: the forge merges them)
+  check <session> [<layer>] [--command "<check>"]
+                          Run the project's check on a layer (by default the
+                          top), in a fresh copy, sandboxed (watch runs them
+                          by itself, one at a time); --command sets it
   sync <session>          Restack onto the remote's trunk (what it's merged
                           drops out), publishing what you approved again
   stack commit|revise …   (For agents, through smudgenix's OpenCode plugin)
@@ -275,7 +279,7 @@ tui_changes() {
 }
 
 # watch's decisions and stacks, while it runs: at first, and whenever they
-# change.
+# change; and the next layer's check, if none's running.
 store_changes() {
   local decided last_decided="" stacked last_stacked="" watcher=$$
   while [ -e "/proc/$watcher" ]; do
@@ -283,6 +287,7 @@ store_changes() {
     [ -z "$decided" ] || [ "$decided" = "$last_decided" ] || { echo "$decided"; last_decided=$decided; }
     stacked=$(stacks_json 2>/dev/null | jq -c '{type: "smx.stacks", stacks: .}') || stacked=""
     [ -z "$stacked" ] || [ "$stacked" = "$last_stacked" ] || { echo "$stacked"; last_stacked=$stacked; }
+    [ -z "$stacked" ] || auto_check "$(jq -c .stacks <<<"$stacked")" >/dev/null 2>&1 &
     sleep 5
   done
 }
@@ -931,17 +936,22 @@ layer_stats() {
 # Every open thread's stack, its layers with their files and hotspots: what
 # watch publishes.
 stacks_json() {
-  local file session view repo stats
+  local file session view repo stats command layer_commit tree check
   for file in "$threads_dir"/*.json; do
     [ -f "$file" ] || continue
     session=$(basename "$file" .json)
     [ "$(jq -r '.closed // empty' "$file")" = "" ] || continue
     view=$(stack_view "$session" 2>/dev/null) || continue
     repo=$(jq -r .repo <<<"$view")
-    stats=$(jq -r '.layers[].commit' <<<"$view" | while read -r commit; do
-      layer_stats "$repo" "$commit" | jq -c --arg c "$commit" '{($c): .}'
+    command=$(check_command_of "$(jq -r .project <<<"$view")" "$(jq -r .workspace <<<"$view")" 2>/dev/null) || command=""
+    stats=$(jq -r '.layers[].commit' <<<"$view" | while read -r layer_commit; do
+      check=""
+      tree=$(git -C "$repo" rev-parse "$layer_commit^{tree}")
+      [ -z "$command" ] || check=$(check_result "$tree" "$command")
+      layer_stats "$repo" "$layer_commit" | jq -c --arg c "$layer_commit" --arg t "$tree" --arg k "$check" --arg cmd "$command" \
+        '{($c): (. + {tree: $t, checkable: ($cmd != ""), check: (if $k == "" then null else ($k | fromjson | {state, command, exit, log, started, finished}) end)})}'
     done | jq -cs 'add // {}')
-    jq -c --argjson stats "$stats" '.layers |= map(. + ($stats[.commit] // {files: [], hotspots: []})
+    jq -c --argjson stats "$stats" '.layers |= map(. + ($stats[.commit] // {files: [], hotspots: [], check: null, checkable: false})
       | . + {added: ([.files[].added] | add // 0), removed: ([.files[].removed] | add // 0)})' <<<"$view"
   done | jq -cs '.'
 }
@@ -1057,6 +1067,152 @@ stack_revise() {
   jq -c '{v: 1, revising: .}' <<<"$layer"
 }
 
+
+# --- checks: evidence, per layer -----------------------------------------------
+
+# A layer's check is the project's, run by smx ai (not the agent) on exactly
+# the layer's tree: in a fresh copy, in agents' sandbox (it's their code). Its
+# result is kept by tree and command, so it holds for the layer however it's
+# restacked, as long as what's in it is the same. watch runs them by itself,
+# one at a time, lowest first (what you'd approve next); v runs one now.
+checks_dir="$stacks_dir/.checks"
+
+# A project's check, as its files suggest: a fresh copy has no dependencies
+# installed, so those that need them install them first.
+guess_check() {
+  local dir=$1
+  if [ -f "$dir/flake.nix" ]; then
+    echo "nix flake check"
+  elif [ -f "$dir/package.json" ] && jq -e '.scripts.test // empty' "$dir/package.json" >/dev/null 2>&1; then
+    if [ -f "$dir/pnpm-lock.yaml" ]; then echo "pnpm install --frozen-lockfile && pnpm test"
+    elif [ -f "$dir/yarn.lock" ]; then echo "yarn install --frozen-lockfile && yarn test"
+    elif [ -f "$dir/bun.lock" ] || [ -f "$dir/bun.lockb" ]; then echo "bun install --frozen-lockfile && bun run test"
+    elif [ -f "$dir/package-lock.json" ]; then echo "npm ci && npm test"
+    else echo "npm install && npm test"
+    fi
+  elif [ -f "$dir/Cargo.toml" ]; then
+    echo "cargo test"
+  elif [ -f "$dir/go.mod" ]; then
+    echo "go test ./..."
+  elif [ -f "$dir/Makefile" ] && grep -qE '^check:' "$dir/Makefile"; then
+    echo "make check"
+  elif [ -f "$dir/Makefile" ] && grep -qE '^test:' "$dir/Makefile"; then
+    echo "make test"
+  elif [ -f "$dir/pyproject.toml" ] || [ -f "$dir/pytest.ini" ]; then
+    echo "python -m pytest"
+  else
+    return 1
+  fi
+}
+
+# A project's check: the one you last gave it, else what its files suggest
+# (from a folder of it).
+check_command_of() {
+  if [ -s "$store_dir/checks/$1" ]; then cat "$store_dir/checks/$1"; else guess_check "$2"; fi
+}
+
+check_file() {
+  echo "$checks_dir/$1-$(printf '%s' "$2" | sha256sum | cut -c1-8).json"
+}
+
+# A check's result, as stacks show it: {state: passed|failed|running|
+# interrupted, command, exit, log, started, finished}, or nothing.
+check_result() {
+  local file result
+  file=$(check_file "$1" "$2")
+  [ -s "$file" ] || return 0
+  result=$(cat "$file")
+  if [ "$(jq -r '.exit // empty' <<<"$result")" != "" ]; then
+    jq -c '. + {state: (if .exit == 0 then "passed" else "failed" end)}' <<<"$result"
+  elif [ -e "/proc/$(jq -r .pid <<<"$result")" ]; then
+    jq -c '. + {state: "running"}' <<<"$result"
+  else
+    jq -c '. + {state: "interrupted"}' <<<"$result"
+  fi
+}
+
+# check: runs a layer's check (by default the top one's), and records it;
+# --command sets the project's (remembered). With --auto (watch's), only if it
+# hasn't been run on that tree yet.
+check_command() {
+  local session="" which="" command="" auto="" json="" thread repo ws view layer commit tree project file work log status started
+  local usage="usage: smx ai check <session> [<layer>] [--command \"<check>\"] [--json]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --command) command=${2:-}; shift; [ -n "$command" ] || die "$usage" ;;
+      --auto) auto=1 ;;
+      --json) json=1 ;;
+      -*) die "$usage" ;;
+      *) if [ -z "$session" ]; then session=$1; elif [ -z "$which" ]; then which=$1; else die "$usage"; fi ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] || die "$usage"
+  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") project=$(jq -r .project <<<"$thread")
+  view=$(stack_view "$session")
+  [ "$(jq '.layers | length' <<<"$view")" -gt 0 ] || die "it has no layers to check"
+  layer=$(layer_of "$view" "${which:-$(jq '.layers | length' <<<"$view")}")
+  [ -n "$layer" ] || die "no layer $which" 4
+  commit=$(jq -r .commit <<<"$layer") tree=$(git -C "$repo" rev-parse "$commit^{tree}")
+  if [ -n "$command" ]; then
+    mkdir -p "$store_dir/checks"
+    printf '%s\n' "$command" >"$store_dir/checks/$project"
+  elif ! command=$(check_command_of "$project" "$ws"); then
+    die "no check found for $project: give it one (it's remembered) with smx ai check $session --command \"<check>\""
+  fi
+  file=$(check_file "$tree" "$command")
+  mkdir -p "$checks_dir"
+  # (watch's: not again, unless it was interrupted.)
+  if [ -n "$auto" ] && [ -s "$file" ] && [ "$(check_result "$tree" "$command" | jq -r .state)" != interrupted ]; then return 0; fi
+
+  # (A copy that shares the repository's objects, read-only, and has its own
+  # everything else: nothing the check does reaches the repository.)
+  work=$(mktemp -d "${TMPDIR:-/tmp}/smx-ai-check.XXXXXX")
+  trap 'rm -rf "${work:-}"' EXIT
+  trap 'exit 130' INT TERM
+  if ! git clone -q --shared --no-checkout "$repo" "$work/copy" 2>/dev/null \
+    || ! git -C "$work/copy" -c advice.detachedHead=false checkout -q --detach "$commit" 2>/dev/null; then
+    die "couldn't check out layer $(jq -r .layer <<<"$layer") ($commit) from $repo"
+  fi
+  started=$(now_ms) log="$checks_dir/$tree-$started.log"
+  jq -cn --arg t "$tree" --arg c "$command" --arg m "$commit" --argjson s "$started" --argjson p "$BASHPID" --arg l "$log" \
+    '{tree: $t, command: $c, commit: $m, started: $s, pid: $p, log: $l, exit: null}' >"$file"
+  [ -n "$json" ] || [ -n "$auto" ] || echo "${D}Checking layer $(jq -r .layer <<<"$layer") (${commit:0:12}), a fresh copy, sandboxed:${N} $command"
+  run_check() (
+    cd "$work/copy" || exit 1
+    if [ -n "$sandbox" ]; then SMX_AI_SHELL=bash exec "$sandbox" -c "$command"; else exec bash -c "$command"; fi
+  )
+  status=0
+  if [ -z "$json" ] && [ -z "$auto" ] && [ -t 1 ]; then
+    run_check 2>&1 </dev/null | tee "$log" || status=${PIPESTATUS[0]}
+  else
+    run_check >"$log" 2>&1 </dev/null || status=$?
+  fi
+  rm -rf "$work"
+  trap - EXIT INT TERM
+  jq -c --argjson x "$status" --argjson f "$(now_ms)" '. + {exit: $x, finished: $f} | del(.pid)' "$file" >"$file.new" && mv "$file.new" "$file"
+  if [ -n "$json" ]; then jq -c '{v: 1} + .' "$file"; return; fi
+  [ -n "$auto" ] && return 0
+  local took=$((($(now_ms) - started) / 1000))
+  took=$([ "$took" -ge 60 ] && echo "$((took / 60))m $((took % 60))s" || echo "${took}s")
+  [ "$status" -eq 0 ] || die "the check failed (exit $status, after $took): $command; its log: $log"
+  echo "${G}✓${N} Passed: $command ${D}($took; its log: $log)${N}"
+}
+
+# watch's: the next layer without a result, if no check's running: open
+# stacks', lowest first, those to review before those approved.
+auto_check() {
+  local next
+  mkdir -p "$checks_dir"
+  (
+    flock -n 9 || exit 0
+    next=$(jq -r '[.[] | .session as $s | .layers[] | select((.check == null or .check.state == "interrupted") and .checkable)
+      | {s: $s, layer, approved: (.state == "approved")}] | sort_by(.approved, .layer) | first // empty | "\(.s) \(.layer)"' <<<"$1")
+    [ -n "$next" ] || exit 0
+    # shellcheck disable=SC2086 # (session and layer)
+    check_command $next --auto >/dev/null 2>&1 || true
+  ) 9>"$checks_dir/.auto.lock"
+}
 
 # --- publishing: what you approve goes to your forge, never your trunk ---------
 
@@ -1216,8 +1372,16 @@ layers_upto() {
 # review and merge: never on your trunk. Not while one's conflicted, or holds
 # an agent's call that's still provisional (approving never decides for you).
 approve_command() {
-  local session=${1:-} which=${2:-} thread ws remote view layer n change unsettled
-  [ -n "$session" ] && [ -n "$which" ] && [ "$#" -eq 2 ] || die "usage: smx ai approve <session> <layer>"
+  local session="" which="" anyway="" thread ws remote view layer n change unsettled failed
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --anyway) anyway=1 ;;
+      -*) die "usage: smx ai approve <session> <layer> [--anyway]" ;;
+      *) if [ -z "$session" ]; then session=$1; elif [ -z "$which" ]; then which=$1; else die "usage: smx ai approve <session> <layer> [--anyway]"; fi ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai approve <session> <layer> [--anyway]"
   thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
   view=$(stack_view "$session")
   layer=$(layer_of "$view" "$which")
@@ -1228,6 +1392,11 @@ approve_command() {
   unsettled=$(fold | jq -r --argjson upto "$(jq -c --argjson n "$n" '[.layers[] | select(.layer <= $n) | .change]' <<<"$view")" \
     '[.current[] | select(.provisional and .layer != null and (.layer | IN($upto[])))] | map("\(.id) \(.text)") | join("; ")')
   [ -z "$unsettled" ] || die "these calls made in it are still provisional: $unsettled (confirm, replace or withdraw them first)"
+  # (A failed check is evidence against it: approving over one is yours to say.)
+  if [ -z "$anyway" ]; then
+    failed=$(stacks_json | jq -r --arg s "$session" --argjson n "$n" '.[] | select(.session == $s) | [.layers[] | select(.layer <= $n and .check.state == "failed") | .layer] | join(", ")')
+    [ -z "$failed" ] || die "the check failed on layer(s) $failed: approve with --anyway if that's fine"
+  fi
 
   remote=$(remote_of "$repo" "$(jq -r .trunk <<<"$thread")")
   if [ -z "$remote" ]; then
@@ -1816,6 +1985,7 @@ case "${1:-}" in
   stack) shift; stack_command "$@" ;;
   approve) shift; approve_command "$@" ;;
   sync) shift; sync_command "$@" ;;
+  check) shift; check_command "$@" ;;
   new) shift; new_thread "$@" ;;
   reply) shift; reply "$@" ;;
   park) shift; park "$@" ;;
