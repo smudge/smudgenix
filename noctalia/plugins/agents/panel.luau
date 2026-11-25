@@ -4,7 +4,10 @@
 -- whose turn it is:
 --
 -- - To decide: what agents asked you, and their provisional calls (from the
---   decision log, smx ai log). Enter opens one with what you need to decide
+--   decision log, smx ai log): a list to check off, not a stack. What holds
+--   something up comes first (a question an agent waits on, a call in a layer
+--   waiting for your approval), then the rest, oldest first in each; one that
+--   rests on another sits under it. Enter opens one with what you need to decide
 --   it: its options and the agent's pick, and what already stands there.
 --   Take an option (1–4) or write your own (w), then why, or leave it open
 --   (o); an agent's call you confirm (c), replace (w) or withdraw (x).
@@ -92,18 +95,52 @@ end
 -- their provisional calls, to confirm or overturn. Newest first.
 local function toDecide(agents, project)
   local d = agents.decisions or {}
+  -- (Layers waiting for your approval: a call made in one holds it up.)
+  local waiting = {}
+  for _, stack in agents.stacks or {} do
+    for _, layer in stack.layers or {} do
+      if layer.state ~= "approved" then waiting[layer.change] = layer.layer end
+    end
+  end
   local items = {}
   for _, brief in d.briefs or {} do
-    if not project or brief.project == project then table.insert(items, { brief = brief }) end
+    if not project or brief.project == project then
+      table.insert(items, { brief = brief, holds = "an agent waits on it" })
+    end
   end
-  table.sort(items, function(a, b) return (a.brief.time or 0) > (b.brief.time or 0) end)
-  local calls = {}
   for _, line in d.current or {} do
-    if line.provisional and (not project or line.project == project) then table.insert(calls, { line = line }) end
+    if line.provisional and (not project or line.project == project) then
+      local n = line.layer and waiting[line.layer]
+      table.insert(items, { line = line, holds = n and `holds up layer {n}` or nil })
+    end
   end
-  table.sort(calls, function(a, b) return (a.line.time or 0) > (b.line.time or 0) end)
-  for _, item in calls do table.insert(items, item) end
-  return items
+  -- What holds something up first, then the rest; oldest first in each.
+  local function time(item) return (item.brief or item.line).time or 0 end
+  table.sort(items, function(a, b)
+    if (a.holds ~= nil) ~= (b.holds ~= nil) then return a.holds ~= nil end
+    return time(a) < time(b)
+  end)
+  -- (One that rests on another goes right under it: a question about a call,
+  -- or a call replacing one.)
+  local byId, under, top = {}, {}, {}
+  for _, item in items do byId[(item.brief or item.line).id] = item end
+  for _, item in items do
+    local on = item.brief and item.brief.serves or item.line and item.line.ref
+    if on and byId[on] and byId[on] ~= item then
+      under[on] = under[on] or {}
+      table.insert(under[on], item)
+    else
+      table.insert(top, item)
+    end
+  end
+  local ordered = {}
+  local function place(item, depth)
+    item.depth = depth
+    table.insert(ordered, item)
+    for _, child in under[(item.brief or item.line).id] or {} do place(child, depth + 1) end
+  end
+  for _, item in top do place(item, 0) end
+  return ordered
 end
 
 -- The questions waiting on each thread.
@@ -556,7 +593,9 @@ end
 local function decideRow(entry, index, agents)
   local brief, line = entry.decide.brief, entry.decide.line
   local from = sessionById(agents, brief and brief.thread or line.thread)
+  local item = entry.decide
   local details = { brief and "asks you" or "an agent's call: confirm or overturn" }
+  if item.holds then table.insert(details, item.holds) end
   if from and from.title then table.insert(details, from.title) end
   if not scope then table.insert(details, (brief or line).project) end
   local when = ago((brief or line).time)
@@ -571,7 +610,9 @@ local function decideRow(entry, index, agents)
       render()
     end,
   }, {
-    ui.glyph({ name = brief and "help-circle" or "circle-dashed", size = 18, color = brief and "tertiary" or "secondary" }),
+    (item.depth or 0) > 0 and ui.box({ width = 22 * item.depth, height = 1 }) or ui.box({ width = 0 }),
+    -- (A list: each one checked off as you decide it.)
+    ui.glyph({ name = "square", size = 18, color = item.holds and "tertiary" or "on_surface/0.5" }),
     ui.column({ gap = 2, flexGrow = 1 }, {
       ui.label({ text = brief and brief.question or line.text, maxLines = 2 }),
       ui.label({ text = table.concat(details, "  ·  "), fontSize = 11, color = "on_surface/0.6", maxLines = 1 }),

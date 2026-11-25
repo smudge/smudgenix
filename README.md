@@ -121,7 +121,10 @@ gets what stands in its project and thread, and is told to work within it.
 When a choice is a judgment call, it asks you instead of guessing, with
 options and its pick, and waits. A small, reversible call it makes and
 records as provisional, for you to confirm or overturn. Both wait in Mod+A,
-under To decide, with what already stands there. You answer with a line of
+under To decide: a list to check off, with what holds something up first (a
+question an agent waits on, a call in a layer waiting for your approval), then
+the rest, oldest first, and one that rests on another right under it. Each
+opens with what already stands there. You answer with a line of
 your own (an option's, edited, or yours) and why, and the agent carries on
 from it.
 
