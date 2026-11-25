@@ -10,7 +10,9 @@
 --   (o); an agent's call you confirm (c), replace (w) or withdraw (x).
 -- - Your turn: it needs you (a permission, a question), or it's back: layers
 --   to review (Enter opens its stack: bottom first, each layer's diff right
---   there; a lands up to one, r has it revised), an answer, or a failure.
+--   there; a approves up to one, publishing them as a chain of pull
+--   requests; r has one revised), an answer, or a failure. Once they're all
+--   approved, the thread waits with the forge, parked.
 -- - Away: an agent's at it, in the background.
 -- - Parked: open, waiting for you to pick it up (collapsed to a count).
 --
@@ -30,7 +32,7 @@ local scope = nil -- a project's name, or nil for all
 local scopeChosen = false -- (by you, so the focused window's doesn't override it)
 local composing = nil -- { mode = "new" | "reply", thread?, text, key }
 local composeCount = 0
-local confirming = nil -- a thread being closed with layers not landed
+local confirming = nil -- a thread being closed with layers still in its stack
 local problem = nil -- the last `smx ai` failure, shown until the next key
 local here = nil -- the focused window's folder, when the overlay opened (smx ai context)
 local submitted = 0 -- when something was last sent (so one Enter can't also open a thread)
@@ -41,6 +43,7 @@ local layerSelected = 1
 local diffs = {} -- layers' diffs, by commit: { lines, more } (or loading = true)
 local diffAt = 1 -- the diff's line to show
 local stacksBy = {} -- threads' stacks, by thread id (from the last render)
+local publishing = nil -- what's being approved (or synced), said while it is
 
 -- --- Helpers -----------------------------------------------------------------
 
@@ -187,19 +190,24 @@ local function turn(thread, children, questions)
     return "away", 0, "subagents at work"
   end
   local stack = stacksBy[thread.id]
-  if stack and #(stack.layers or {}) > 0 then
-    local n, spots, conflicted = #stack.layers, 0, 0
-    for _, layer in stack.layers do
+  local n, spots, conflicted, approved = 0, 0, 0, 0
+  for _, layer in stack and stack.layers or {} do
+    if layer.state == "approved" then
+      approved += 1
+    else
+      n += 1
       spots += #(layer.hotspots or {})
-      if layer.conflict then conflicted += 1 end
     end
+    if layer.conflict then conflicted += 1 end
+  end
+  if n > 0 then
     return "you", 1, `{n} layer{n == 1 and "" or "s"} to review` .. (spots > 0 and `, {spots} flagged` or "")
-      .. (conflicted > 0 and `, {conflicted} conflicted` or "")
+      .. (conflicted > 0 and `, {conflicted} conflicted` or "") .. (approved > 0 and `, {approved} approved` or "")
   end
   if thread.unseen then
     return "you", 2, thread.state == "failed" and "back: it failed" or "back: it's answered"
   end
-  return "parked", 0, "parked"
+  return "parked", 0, approved > 0 and `{approved} layer{approved == 1 and "" or "s"} with the forge` or "parked"
 end
 
 local function glyphFor(thread, where, questions)
@@ -286,7 +294,7 @@ local function submit(text, inTui)
   render()
 end
 
--- Closing a thread: at once, or (with layers not landed) after you decide.
+-- Closing a thread: at once, or (with layers in its stack) after you decide.
 local function close(thread, decision)
   local stack = stacksBy[thread.id]
   if stack and #(stack.layers or {}) > 0 and not decision then
@@ -311,7 +319,7 @@ local function hints(entry)
     return composing.mode == "reply" and "Enter send  ·  Esc close"
       or "Enter start, in the background  ·  Shift+Enter start, in a TUI  ·  Esc close"
   elseif confirming then
-    return "a land it (or accept it) and close  ·  x set it aside and close  ·  any other key: don't"
+    return "a approve its layers and close  ·  x set them aside and close  ·  any other key: don't"
   elseif entry and entry.parked then
     return "Enter or → show parked  ·  n new thread  ·  Tab project"
   elseif entry and entry.decide then
@@ -365,8 +373,8 @@ local function threadRow(entry, index, children, questions)
   end
   if confirming and confirming.id == thread.id then
     table.insert(lines, ui.row({ gap = 6 }, {
-      ui.label({ text = "It has layers not landed:", fontSize = 12, color = "tertiary" }),
-      ui.button({ text = "Land them all, and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, "accept") end }),
+      ui.label({ text = "It has layers:", fontSize = 12, color = "tertiary" }),
+      ui.button({ text = "Approve them all, and close", variant = "primary", controlSize = "sm", onClick = function() close(thread, "accept") end }),
       ui.button({ text = "Set them aside, and close", variant = "outline", controlSize = "sm", onClick = function() close(thread, "discard") end }),
     }))
   end
@@ -441,12 +449,20 @@ local function renderStack(agents, stack)
     if spots > 0 then table.insert(facts, `{spots} flagged`) end
     if layer.conflict then table.insert(facts, "conflicted") end
     if stack.revising == layer.change then table.insert(facts, "being revised") end
+    local pr = layer.published and layer.published.pr
+    if layer.state == "approved" then
+      table.insert(facts, pr and `approved: #{pr.number}` or "approved")
+      if layer.published and layer.published.branch and not layer.pushed then table.insert(facts, "restacked: s publishes it") end
+    elseif layer.state == "changed" then
+      table.insert(facts, "changed since you approved it")
+    end
     table.insert(rows, ui.row({
       key = "layer-" .. i, gap = 8, padding = 6, radius = 6, align = "center",
       fill = i == layerSelected and "primary/0.15" or nil,
       onClick = function() layerSelected = i; diffAt = 1; render() end,
     }, {
-      ui.label({ text = tostring(i), fontSize = 12, fontWeight = "bold", color = "on_surface/0.5" }),
+      layer.state == "approved" and ui.glyph({ name = "check", size = 14, color = "secondary" })
+        or ui.label({ text = tostring(i), fontSize = 12, fontWeight = "bold", color = "on_surface/0.5" }),
       ui.label({ text = layer.title ~= "" and layer.title or "(no purpose given)", maxLines = 1, flexGrow = 1,
         color = layer.conflict and "error" or "on_surface" }),
       ui.label({ text = table.concat(facts, "  ·  "), fontSize = 11, color = spots > 0 and "tertiary" or "on_surface/0.55" }),
@@ -479,13 +495,15 @@ local function renderStack(agents, stack)
   end
 
   local said = { stack.project, "on " .. stack.trunk }
+  if (stack.merged or 0) > 0 then table.insert(said, `{stack.merged} merged`) end
   if thread and thread.state == "working" then table.insert(said, "its agent is at work") end
   panel.render(ui.column({ padding = 14, gap = 6 }, {
     ui.row({ gap = 8, align = "center" }, {
       ui.row({ onClick = function() stacking = nil; render() end }, { ui.glyph({ name = "chevron-left", size = 16, color = "on_surface/0.6" }) }),
       ui.label({ text = thread and thread.title or "(a thread)", fontSize = 15, fontWeight = "bold", maxLines = 1, flexGrow = 1 }),
     }),
-    ui.label({ text = table.concat(said, "  ·  ") .. "  ·  bottom first: it lands first", fontSize = 11, color = "on_surface/0.6" }),
+    ui.label({ text = table.concat(said, "  ·  ") .. "  ·  bottom first: it merges first", fontSize = 11, color = "on_surface/0.6" }),
+    publishing and ui.label({ text = publishing, fontSize = 12, color = "primary", maxLines = 2 }) or ui.box({ height = 0 }),
     problem and ui.label({ text = problem, fontSize = 12, color = "error", maxLines = 4 }) or ui.box({ height = 0 }),
     composing and ui.input({
       key = composing.key, placeholder = composing.placeholder or "…", focus = true,
@@ -494,7 +512,7 @@ local function renderStack(agents, stack)
     }) or ui.box({ height = 0 }),
     ui.column({ gap = 2 }, rows),
     ui.scroll({ flexGrow = 1, gap = 0, revealKey = "d-" .. diffAt }, detail),
-    ui.label({ text = "j/k layer  ·  Shift+J/K scroll  ·  a land up to it  ·  r revise it  ·  Enter full diff  ·  ← back",
+    ui.label({ text = "j/k layer  ·  Shift+J/K scroll  ·  a approve up to it (pull requests)  ·  r revise it  ·  s sync  ·  Enter full diff  ·  ← back",
       fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
@@ -668,7 +686,7 @@ function render()
       renderStack(agents, stacksBy[stacking])
       return
     end
-    stacking = nil -- (all landed, or closed)
+    stacking = nil -- (all merged, or closed)
   end
 
   if deciding then
@@ -927,8 +945,18 @@ function onKey(chord, pressed)
       diffAt = math.max(diffAt - 20, 1)
     elseif chord == "Left" or chord == "h" then
       stacking = nil
-    elseif chord == "a" then
-      run({ "smx", "ai", "land", stack.session, layer.change }, function() layerSelected, diffAt = 1, 1 end)
+    elseif (chord == "a" or chord == "s") and not publishing then
+      -- (It fetches and pushes: it takes a moment.)
+      publishing = chord == "a" and `Approving up to layer {layerSelected}: publishing to its remote…` or "Syncing with its remote…"
+      local argv = chord == "a" and { "smx", "ai", "approve", stack.session, layer.change } or { "smx", "ai", "sync", stack.session }
+      noctalia.runAsync(argv, function(result)
+        publishing = nil
+        if result.exitCode ~= 0 then
+          local said = ((result.stderr or ""):gsub("\27%[[%d;]*m", ""):gsub("^smx ai: ", ""):gsub("%s+$", ""))
+          problem = `smx ai {argv[3]} failed: {said ~= "" and said or ("exit " .. tostring(result.exitCode))}`
+        end
+        render()
+      end)
     elseif chord == "r" then
       local thread = sessionById(agents, stack.session)
       if thread then
