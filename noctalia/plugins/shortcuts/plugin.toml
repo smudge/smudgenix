@@ -1,0 +1,21 @@
+id          = "smudgenix/shortcuts"
+name        = "Shortcuts"
+version     = "0.1.0"
+plugin_api  = 56
+author      = "smudgenix"
+icon        = "keyboard"
+description = "Super's shortcuts, while you hold it (smudgenix.desktop.leader)."
+
+# Never takes the keyboard, so the shortcut you press still goes to niri, and
+# typing to the window you're in.
+[[panel]]
+id                       = "keys"
+entry                    = "panel.luau"
+width                    = 980
+height                   = "content"
+max_height               = 760
+placement                = "attached"
+position                 = "center"
+open_near_click          = false
+keyboard_focus           = "none"
+dismiss_on_outside_click = false

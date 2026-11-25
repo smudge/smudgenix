@@ -5,8 +5,10 @@
 #
 #   - Tapped alone: opens $tap (a Noctalia panel).
 #   - Held alone for $peek_after ms: the bar peeks out, until it's released.
-#   - Still held at $overlay_after ms: niri's hotkey overlay. (Any key or
-#     click closes it, and still does what it would.)
+#   - Still held at $overlay_after ms: its shortcuts (a Noctalia panel,
+#     ../../noctalia/plugins/shortcuts), until it's released. (Not if a panel's open already.)
+
+sheet=smudgenix/shortcuts:keys
 
 exec 3< <(socat -u "UNIX-CONNECT:$socket" STDOUT)
 
@@ -31,12 +33,17 @@ deadline() {
       noctalia msg bar-show >/dev/null
     fi
   else
-    shown=1
-    niri msg action show-hotkey-overlay
+    read -r _ panel _ <<<"$(state)"
+    if [ "$panel" != true ]; then
+      shown=1
+      noctalia msg panel-open "$sheet" >/dev/null
+    fi
+    shown=${shown:-skipped}
   fi
 }
 
 released() {
+  [ "$shown" != 1 ] || noctalia msg panel-close "$sheet" >/dev/null
   if [ -z "$other" ] && [ -z "$peeked" ]; then
     [ -n "$tap" ] || return 0
     read -r _ _ locked <<<"$(state)"

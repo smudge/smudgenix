@@ -29,7 +29,8 @@ function send(what) { print what; fflush() }
   next
 }
 
-# Clicks, scrolls, gestures and touches count too (like Super+drag).
-/POINTER_BUTTON.* pressed|POINTER_SCROLL_|GESTURE_[A-Z]+_BEGIN|TOUCH_DOWN|TABLET_TOOL_TIP/ {
+# Clicks, scrolls, swipes and touches count too (like Super+drag); a finger
+# resting on the touchpad (a "hold" gesture) doesn't.
+/POINTER_BUTTON.* pressed|POINTER_SCROLL_|GESTURE_(SWIPE|PINCH)_BEGIN|TOUCH_DOWN|TABLET_TOOL_TIP/ {
   if (supers > 0 && !other) { other = 1; send("other") }
 }

@@ -1,7 +1,8 @@
 # The leader key: Super (niri's Mod) does things on its own, which niri binds
 # can't (they run on presses, and Super is part of every one). Tapped alone,
-# it opens the Control Center; held, the bar peeks out, then niri's hotkey
-# overlay shows. See ./leader.sh.
+# it opens the Control Center; held, the bar peeks out, then its shortcuts
+# show (a Noctalia panel: ../../noctalia/plugins/shortcuts), until it's
+# released. See ./leader.sh.
 #
 # A system service reads input events (with libinput, as a throwaway user
 # in the `input` group), and passes on only Super's presses and releases,
@@ -50,10 +51,11 @@ in
     };
     overlayAfter = lib.mkOption {
       type = lib.types.ints.unsigned;
-      default = 1500;
+      default = 2500;
       description = ''
-        Milliseconds Super is held alone before niri's hotkey overlay shows
-        (0 for never).
+        Milliseconds Super is held alone before its shortcuts show, until
+        it's released (0 for never). (Super+Shift+/ shows niri's list of
+        all of them, any time.)
       '';
     };
   };
@@ -113,6 +115,10 @@ in
         SystemCallFilter = [ "@system-service" "~@privileged" ];
       };
     };
+
+    # The shortcuts sheet, for ../../noctalia/plugins/shortcuts.
+    environment.etc."smudgenix/shortcuts.json".text =
+      builtins.toJSON (import ./shortcuts.nix { inherit lib; } desktop.binds);
 
     systemd.user.services.smudgenix-leader = {
       description = "Super on its own: tapped, or held";

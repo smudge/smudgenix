@@ -114,7 +114,8 @@ let
         { name = "community"; kind = "git"; location = "https://github.com/noctalia-dev/community-plugins"; enabled = true; }
         { name = "smudgenix"; kind = "path"; location = "${plugins}"; enabled = true; }
       ];
-      enabled = lib.optional agents "smudgenix/agents";
+      enabled = lib.optional agents "smudgenix/agents"
+        ++ lib.optional desktop.leader.enable "smudgenix/shortcuts";
     };
 
     # (Only when it isn't the plugin's default.)
@@ -253,7 +254,7 @@ in
     smudgenix.desktop.binds = lib.mapAttrs (_: lib.mkDefault) ({
       "Mod+Space" = msg [ "panel-toggle" "launcher" ] // { hotkey-overlay-title = "Open the Launcher"; };
       "Mod+Ctrl+V" = msg [ "panel-toggle" "clipboard" ] // { hotkey-overlay-title = "Show Clipboard History"; };
-      "Mod+N" = msg [ "panel-toggle" "control-center" ];
+      "Mod+N" = msg [ "panel-toggle" "control-center" ] // { hotkey-overlay-title = "Open the Control Center"; };
       "Super+Alt+L" = msg [ "session" "lock" ] // { hotkey-overlay-title = "Lock the Screen"; };
     } // lib.optionalAttrs agents {
       "Mod+A" = msg [ "panel-toggle" "smudgenix/agents:sessions" ] // { hotkey-overlay-title = "Show Agents"; };

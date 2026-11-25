@@ -39,7 +39,8 @@ Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 The desktop is niri with the Noctalia shell. Its bar hides when windows need
 the space, and shows whenever something drops from it. Super is the leader
 key: tap it alone for the Control Center, hold it and the bar peeks out, keep
-holding and niri's shortcuts show (`smudgenix.desktop.leader`).
+holding and its shortcuts show, until you let go (`smudgenix.desktop.leader`).
+Super+Shift+/ lists every shortcut.
 
 ## Userland only (any Nix-enabled home)
 
