@@ -127,8 +127,26 @@ where), to allow or deny; or `smx ai allow|deny <request>`. `--always` allows th
 now on (OpenCode keeps these); `smx ai allowed` lists them, and
 `smx ai allowed revoke <id>` takes one back.
 
-An agent finishing isn't its work being done: you review it. When a session
-finishes having changed its repository, its work goes to review by itself
+A thread you start in a repository (`smx ai new`, or `n` in Mod+A) works in
+a workspace of its own, in smudgenix's store (a jj workspace, and a git
+worktree, of your repository), never in your checkout. Its work is a stack of
+layers: one change each, with its purpose as its commit title, each safe to
+land on its own, the least controversial first. Agents commit and revise
+layers only through smudgenix's OpenCode plugin: their own commands can't
+change history. Mod+A shows a thread with layers as "to review". Enter opens
+its stack, bottom first: each layer's purpose and size, and the selected
+one's hotspots and diff, right there (Shift+J/K scrolls it; Enter opens it
+all in a terminal). `a` lands it and every layer below it on your trunk (a
+fast-forward, in your checkout if it's on it: your uncommitted work stays).
+`r` tells the agent what to change in it; the layers above restack on the
+change. A layer with an agent's call still provisional in it can't land until
+you settle the call. `smx ai stack <session>`, `stack diff <session> <layer>`
+and `land <session> <layer>` do the same from a terminal. Closing a thread
+lands its layers (`--accept`) or sets them aside (`--discard`: still in jj's
+history, never reverted), and removes its workspace.
+
+A session started some other way (in your checkout, say) is reviewed whole
+instead: when it finishes having changed its repository, its work goes to review by itself
 (`smx ai review <session>`, or `p` on it in Mod+A, does it any time): the
 change, frozen as a commit of the working tree (untracked files too; your
 branch and files untouched), from where it started (or its last accepted
