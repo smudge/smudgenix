@@ -1291,6 +1291,12 @@ restack_onto_remote() {
   git -C "$repo" fetch -q "$remote" "+refs/heads/$trunk:refs/remotes/$remote/$trunk" 2>/dev/null \
     || die "couldn't fetch $trunk from $remote"
   jjr -R "$ws" git import >/dev/null 2>&1 || true
+  # (A stack on commits of your trunk the remote doesn't have yet: they'd be
+  # left out from under it. They're yours to push, or the forge's to merge.)
+  local unpushed
+  unpushed=$(jjr -R "$ws" log --ignore-working-copy --no-graph -r "::(roots($(stack_revset "$thread"))-) ~ ::\"$trunk\"@\"$remote\"" -T '"x\n"' | wc -l)
+  [ "$unpushed" -eq 0 ] \
+    || die "the stack builds on $unpushed commit(s) of your $trunk that $remote doesn't have: push them (or have them merged) first"
   op=$(jjr -R "$ws" op log -n1 --no-graph -T 'id')
   jjr -R "$ws" rebase -s "roots($(stack_revset "$thread"))" -d "\"$trunk\"@\"$remote\"" --skip-emptied >/dev/null 2>&1 \
     || die "couldn't rebase the stack onto $remote's $trunk"
