@@ -98,17 +98,18 @@ its permission rules govern those.
 
 On the desktop, the bar's agents capsule is grey unless something needs you,
 waits for review, or is at work, and you're only interrupted (a notification)
-when an agent needs you or fails. Mod+A (or a click on it) shows your
-threads of work in the project you're in (Tab for others, or all), by whose
-turn it is: yours (it needs you, or it's back: work to review, an answer),
-away (an agent's at it), or parked. A thread stays until you close it (`c`);
-`n` starts one (Enter: in the background, to come back when it's done;
-Shift+Enter: in a TUI), `r` tells one more, `z` parks one. `smx ai new`,
-`reply`, `park`, `close`, `status`, `watch` and `open` do the same from a
-terminal. Closing a thread archives its session (nothing's deleted), and
-`smx ai history` shows your threads day by day, closed ones too: when, in
-which project, how they ended (what came of their stacks) and what they cost,
-subagents included (`--days`, `--since`, `--project`, `--json`).
+when an agent needs you or fails. Mod+A (or a click on it) shows where your
+threads of work are, in the project you're in (Tab for others, or all): needs
+you (a permission or a question, layers to review, an agent stuck, a
+failure), working, done (back since you looked), or idle. It only shows:
+Enter takes you where the thread is, its OpenCode TUI and a shell where its
+work is (`smx ai open <session> --shell`), and you act there, with the tools
+that already do it. `smx ai new`, `reply`, `park`, `close`, `status`, `watch`
+and `open` work from a terminal. Closing a thread archives its session
+(nothing's deleted), and `smx ai history` shows your threads day by day,
+closed ones too: when, in which project, how they ended (what came of their
+stacks) and what they cost, subagents included (`--days`, `--since`,
+`--project`, `--json`).
 
 What you decide goes in a decision log: one line each, like a changelog, kept
 privately in `~/.local/share/smudgenix/decisions.jsonl`. A line is a
@@ -120,48 +121,42 @@ project you're in by default. Nothing's ever edited: `--supersedes <id>`,
 shows it all, newest first (`--current`: only what stands now). Every agent
 gets what stands in its project and thread, and is told to work within it.
 When a choice is a judgment call, it asks you instead of guessing, with
-options and its pick, and waits. A small, reversible call it makes and
-records as provisional, for you to confirm or overturn. Both wait in Mod+A,
-under To decide: a list to check off, with what holds something up first (a
-question an agent waits on, a call in a layer waiting for your approval), then
-the rest, oldest first, and one that rests on another right under it. Each
-opens with what already stands there. You answer with a line of
-your own (an option's, edited, or yours) and why, and the agent carries on
-from it.
+OpenCode's own question (options, its pick first), in its TUI; what you
+answer goes in the log as your decision, in its thread. A small, reversible
+call it makes and records as provisional, for you to confirm or overturn
+(`smx ai confirm`, `withdraw`, or `decide --supersedes`); Mod+A counts those,
+and Enter on them opens `smx ai log --current`.
 
-When an agent asks permission, its notification opens Mod+A on it (so one
-appearing as you type can't answer anything, and one you missed is a Mod+A
-away), which shows the request as it is (the command, or the files, and
-where), to allow or deny; or `smx ai allow|deny <request>`. `--always` allows the like in that project from
-now on (OpenCode keeps these); `smx ai allowed` lists them, and
-`smx ai allowed revoke <id>` takes one back.
+When an agent asks permission, it waits in its TUI, as OpenCode asks; its
+notification opens Mod+A on it. `smx ai allow|deny <request>` answers from a
+terminal; `--always` allows the like in that project from now on (OpenCode
+keeps these); `smx ai allowed` lists them, and `smx ai allowed revoke <id>`
+takes one back.
 
-A thread you start in a repository (`smx ai new`, or `n` in Mod+A) works in
-a workspace of its own, in smudgenix's store (a jj workspace, and a git
-worktree, of your repository), never in your checkout. Its work is a stack of
-layers: one change each, with its purpose as its commit title, each safe to
-land on its own, the least controversial first. Agents commit and revise
-layers only through smudgenix's OpenCode plugin: their own commands can't
-change history. Mod+A shows a thread with layers as "to review". Enter opens
-its stack, bottom first: each layer's purpose and size, and the selected
-one's diff and the places in it worth a closer look (dependencies, deleted or
-skipped tests, migrations, CI, security-sensitive files and lines, large
-changes), right there (Shift+J/K scrolls it; Enter opens it
-all in a terminal). `a` approves it and every layer below it: it never
-touches your trunk, but publishes them for your forge's own review, each to a
-branch of its own on your repository's remote, and a pull request each,
-chained bottom first (on GitHub, through `gh`, linked as a stack where the
-repository has stacks; GitLab through `glab`, Gitea and Forgejo through
-`tea`; elsewhere, just the branches). Your forge merges them, as it would
-anyone's. Only what you approved is pushed, and agents never push. `s` (or
-`smx ai sync <session>`) puts the stack on your trunk as the remote has it now:
-what the forge has merged, squashed or not, drops out, and what you approved
-and has restacked since is published again. `r` tells the agent what to change
-in a layer (approved or not: a changed one waits for you to approve it again);
-the layers above restack on the change. A layer with an agent's call still
-provisional in it can't be approved until you settle the call. `smx ai stack
-<session>`, `stack diff <session> <layer>` and `approve <session> <layer>` do
-the same from a terminal. Closing a thread approves its layers (`--accept`) or
+A thread you start in a repository (`smx ai new`) works in a workspace of its
+own, in smudgenix's store (a jj workspace, and a git worktree, of your
+repository), never in your checkout. Its work is a stack of layers: one
+change each, with its purpose as its commit title, each safe to land on its
+own, the least controversial first. Agents commit and revise layers only
+through smudgenix's OpenCode plugin: their own commands can't change
+history. Mod+A shows a thread with layers as needing you; its shell (`smx ai
+shell <session>`) starts in its workspace, showing its stack, bottom first,
+so you can look with jj (`jj diff -r <layer>`) or `smx ai stack diff
+<session> <layer>`. `smx ai approve <session> <layer>` approves it and every
+layer below it: it never touches your trunk, but publishes them for your
+forge's own review, each to a branch of its own on your repository's remote,
+and a pull request each, chained bottom first (on GitHub, through `gh`,
+linked as a stack where the repository has stacks; GitLab through `glab`,
+Gitea and Forgejo through `tea`; elsewhere, just the branches). Your forge
+merges them, as it would anyone's. Only what you approved is pushed, agents
+never push, and a stack built on trunk commits the remote doesn't have yet
+waits until you push them. `smx ai sync <session>` puts the stack on your
+trunk as the remote has it now: what the forge has merged, squashed or not,
+drops out, and what you approved and has restacked since is published again.
+To change a layer (approved or not: a changed one waits for you to approve it
+again), tell its agent, in its TUI; the layers above restack on the change. A
+layer with an agent's call still provisional in it can't be approved until
+you settle the call. Closing a thread approves its layers (`--accept`) or
 sets them aside (`--discard`: still in jj's history, never reverted), and
 removes its workspace.
 
@@ -171,18 +166,18 @@ project's check on exactly that layer, in a fresh copy and agents' sandbox
 result by what's in the layer, so a restack that doesn't change it keeps it.
 The check is guessed from the project's files (`nix flake check`, `npm test`,
 `cargo test`, `go test ./...`, `make check`, `pytest`…), or the one you last
-gave it (`smx ai check <session> [<layer>] --command "<check>"`). In a stack,
-`v` checks the selected layer now and `e` shows its log; a layer whose check
-fails is approved only if you say so (Shift+A, or `approve --anyway`).
+gave it (`smx ai check <session> [<layer>] --command "<check>"`). `smx ai
+stack` shows each layer's result, with its log; a layer whose check fails is
+approved only if you say so (`approve --anyway`).
 
-An agent ends every turn saying why it stopped: it asked you something, it's
-unsure how to go on, something conflicts with what stands, a failure it can't
-fix, it's as far ahead of you as it may go, it's costing more than it's
-worth, or it's done. Mod+A puts the ones that need you first and shows its
-line on it. How far ahead it may go is a number of layers waiting for your
-approval (3 by default; `smx ai lead <layers>` for the project you're in):
-beyond that, it can't commit another layer. Every pause is kept, in
-`~/.local/share/smudgenix/pauses.jsonl`, to tune that by.
+An agent ends every turn saying why it stopped: it needs you to decide
+something, it's unsure how to go on, something conflicts with what stands, a
+failure it can't fix, it's as far ahead of you as it may go, it's costing
+more than it's worth, or it's done. Mod+A puts the ones stuck under needs you
+and shows its line on it. How far ahead it may go is a number of layers
+waiting for your approval (3 by default; `smx ai lead <layers>` for the
+project you're in): beyond that, it can't commit another layer. Every pause is
+kept, in `~/.local/share/smudgenix/pauses.jsonl`, to tune that by.
 
 ## smx
 
