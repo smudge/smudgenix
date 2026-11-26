@@ -2,7 +2,8 @@
 # changes to ~/.local/state/noctalia/settings.toml (layered over the system's
 # config). Settings declared here are merged into that file on every switch,
 # overwriting those keys and leaving the rest of your tweaks alone, much like
-# home-manager's `dconf.settings`. Delete the file to reset every tweak.
+# home-manager's `dconf.settings`. Those in `unset` are taken out of it, so the
+# system's win again. Delete the file to reset every tweak.
 #
 # And smudgenix's Noctalia plugins, live from a checkout, to work on them.
 { config, pkgs, lib, ... }:
@@ -27,6 +28,16 @@ in
     description = "Noctalia settings to apply over the system's defaults.";
   };
 
+  options.smudgenix.desktop.noctalia.unset = lib.mkOption {
+    type = lib.types.listOf lib.types.str;
+    default = [ ];
+    example = [ "bar.default.start" "widget.clock" ];
+    description = ''
+      Noctalia settings (dotted paths) to take out of its GUI's overrides on
+      every switch, so the system's (or `settings`') win.
+    '';
+  };
+
   options.smudgenix.desktop.noctalia.pluginsFrom = lib.mkOption {
     type = lib.types.nullOr lib.types.str;
     default = null;
@@ -46,14 +57,15 @@ in
       }) pluginNames);
     })
 
-    (lib.mkIf (isLinux && cfg.settings != { }) {
+    (lib.mkIf (isLinux && (cfg.settings != { } || cfg.unset != [ ])) {
       home.activation.smudgenixNoctalia = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         noctalia_state="''${XDG_STATE_HOME:-$HOME/.local/state}/noctalia"
         noctalia_settings="$noctalia_state/settings.toml"
         run mkdir -p "$noctalia_state"
         noctalia_tmp=$(mktemp)
         { if [ -s "$noctalia_settings" ]; then ${lib.getExe pkgs.yj} -tj < "$noctalia_settings"; else echo '{}'; fi; } \
-          | ${lib.getExe pkgs.jq} -s '.[0] * .[1]' - ${declared} \
+          | ${lib.getExe pkgs.jq} -s --argjson unset ${lib.escapeShellArg (builtins.toJSON (map (lib.splitString ".") cfg.unset))} \
+            '(.[0] | delpaths($unset)) * .[1]' - ${declared} \
           | ${lib.getExe pkgs.yj} -jt > "$noctalia_tmp"
         run mv "$noctalia_tmp" "$noctalia_settings"
       '';

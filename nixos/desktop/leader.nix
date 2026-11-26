@@ -24,7 +24,6 @@ let
       peek_after=${toString cfg.peekAfter}
       overlay_after=${toString cfg.overlayAfter}
       tap=${lib.escapeShellArg (if cfg.tap == null then "" else cfg.tap)}
-      hinted=(${lib.escapeShellArgs cfg.hinted})
     '' + builtins.readFile ./leader.sh;
   };
 in
@@ -66,7 +65,7 @@ in
       internal = true;
       description = ''
         Noctalia plugin widgets (as `author/plugin:entry`) that show their
-        shortcut with the rest of Super's, on a "hints" event.
+        shortcut while the shortcuts sheet is open, on a "hints" event.
       '';
     };
     overlayAfter = lib.mkOption {
@@ -137,8 +136,18 @@ in
     };
 
     # The shortcuts sheet, for ../../noctalia/plugins/shortcuts.
-    environment.etc."smudgenix/shortcuts.json".text =
-      builtins.toJSON shortcuts.sheet;
+    environment.etc."smudgenix/shortcuts.json".text = builtins.toJSON {
+      sections = shortcuts.sheet;
+      inherit (cfg) hinted;
+      noctalia = lib.getExe config.programs.noctalia.package;
+    };
+
+    # Super+Shift+/ shows them too, in place of niri's list. (Over the default
+    # binds, ../binds.nix, under a host's own.)
+    smudgenix.desktop.binds."Mod+Shift+Slash" = lib.mkOverride 900 {
+      action = "spawn \"noctalia\" \"msg\" \"panel-toggle\" \"smudgenix/shortcuts:list\"";
+      hotkey-overlay-title = "Show the Shortcuts";
+    };
 
     systemd.user.services.smudgenix-leader = {
       description = "Super on its own: tapped, or held";

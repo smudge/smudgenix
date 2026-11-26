@@ -5,10 +5,9 @@
 #
 #   - Tapped alone: opens $tap (a Noctalia panel).
 #   - Held alone for $peek_after ms: the bar peeks out, until it's released.
-#   - Still held at $overlay_after ms: its shortcuts, until it's released: a
-#     Noctalia panel (../../noctalia/plugins/shortcuts), and the bar's
-#     buttons' own on them ($hinted, Noctalia plugin widgets). (Not if a
-#     panel's open already.)
+#   - Still held at $overlay_after ms: its shortcuts, until it's released (a
+#     Noctalia panel, ../../noctalia/plugins/shortcuts, which has the bar's
+#     buttons show theirs too). (Not if a panel's open already.)
 
 sheet=smudgenix/shortcuts:keys
 
@@ -22,14 +21,7 @@ state() {
     || echo "true true true"
 }
 
-# Tells the bar's buttons to show their shortcuts, or not.
-hints() {
-  for widget in "${hinted[@]}"; do
-    noctalia msg plugin "$widget" all hints "$1" >/dev/null 2>&1 || true
-  done
-}
-
-held="" other="" peeked="" shown="" hide="" hinting=""
+held="" other="" peeked="" shown="" hide=""
 
 deadline() {
   if [ -z "$peeked" ]; then
@@ -46,15 +38,12 @@ deadline() {
     if [ "$panel" != true ]; then
       shown=1
       noctalia msg panel-open "$sheet" >/dev/null
-      hinting=1
-      hints on
     fi
     shown=${shown:-skipped}
   fi
 }
 
 released() {
-  [ -z "$hinting" ] || hints off
   [ "$shown" != 1 ] || noctalia msg panel-close "$sheet" >/dev/null
   if [ -z "$other" ] && [ -z "$peeked" ]; then
     [ -n "$tap" ] || return 0
@@ -88,7 +77,7 @@ while :; do
 
   if read -r -u 3 "${wait_for[@]}" event; then
     case "$event" in
-      down) clock; start=$now held=1 other="" peeked="" shown="" hide="" hinting="" ;;
+      down) clock; start=$now held=1 other="" peeked="" shown="" hide="" ;;
       other) other=1 ;;
       up) [ -z "$held" ] || released; held="" ;;
     esac

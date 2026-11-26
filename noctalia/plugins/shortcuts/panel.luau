@@ -1,7 +1,8 @@
 --!nonstrict
--- Super's shortcuts, while you hold it: opened and closed by the leader key
--- (nixos/desktop/leader.sh), from the sheet smudgenix writes from its binds
--- (nixos/desktop/shortcuts.nix). Keys are shown without "Super+".
+-- Super's shortcuts: while you hold it (opened and closed by the leader key,
+-- nixos/desktop/leader.sh), or from a key. From the sheet smudgenix writes
+-- from its binds (nixos/desktop/shortcuts.nix); keys are shown without
+-- "Super+". While it's open, the bar's buttons show theirs too.
 
 local sheetPath = "/etc/smudgenix/shortcuts.json"
 local columns = 3
@@ -25,10 +26,24 @@ local function section(s)
   return ui.column({ gap = 5 }, rows)
 end
 
-function render()
+local function load()
   local raw = noctalia.readFile(sheetPath)
   local sheet = raw and noctalia.json.decode(raw) or nil
-  if type(sheet) ~= "table" then
+  return type(sheet) == "table" and sheet or nil
+end
+
+-- Tells the bar's buttons (sheet.hinted, plugin widgets) to show their keys.
+local function hints(state)
+  local sheet = load()
+  if not sheet then return end
+  for _, widget in sheet.hinted do
+    noctalia.runAsync({ sheet.noctalia, "msg", "plugin", widget, "all", "hints", state })
+  end
+end
+
+function render()
+  local sheet = load()
+  if not sheet then
     panel.render(ui.column({ padding = 14 }, {
       ui.label({ text = `No shortcuts at {sheetPath}`, color = "on_surface/0.7" }),
     }))
@@ -40,7 +55,7 @@ function render()
   for i = 1, columns do
     cols[i], heights[i] = {}, 0
   end
-  for _, s in sheet do
+  for _, s in sheet.sections do
     local shortest = 1
     for i = 2, columns do
       if heights[i] < heights[shortest] then shortest = i end
@@ -58,4 +73,9 @@ end
 
 function onOpen()
   render()
+  hints("on")
+end
+
+function onClose()
+  hints("off")
 end
