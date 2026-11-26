@@ -66,7 +66,7 @@ in
       internal = true;
       description = ''
         Noctalia plugin widgets (as `author/plugin:entry`) that show their
-        shortcut while Super is held, on a "hints" event.
+        shortcut with the rest of Super's, on a "hints" event.
       '';
     };
     overlayAfter = lib.mkOption {

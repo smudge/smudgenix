@@ -4,10 +4,11 @@
 # ./leader-events.awk, on $socket:
 #
 #   - Tapped alone: opens $tap (a Noctalia panel).
-#   - Held alone for $peek_after ms: the bar peeks out, its buttons showing
-#     their shortcuts ($hinted, Noctalia plugin widgets), until it's released.
-#   - Still held at $overlay_after ms: its shortcuts (a Noctalia panel,
-#     ../../noctalia/plugins/shortcuts), until it's released. (Not if a panel's open already.)
+#   - Held alone for $peek_after ms: the bar peeks out, until it's released.
+#   - Still held at $overlay_after ms: its shortcuts, until it's released: a
+#     Noctalia panel (../../noctalia/plugins/shortcuts), and the bar's
+#     buttons' own on them ($hinted, Noctalia plugin widgets). (Not if a
+#     panel's open already.)
 
 sheet=smudgenix/shortcuts:keys
 
@@ -36,19 +37,17 @@ deadline() {
     read -r visible _ locked <<<"$(state)"
     if [ "$locked" = true ]; then
       other=1 # (Nothing more until it's released.)
-    else
-      if [ "$visible" != true ]; then
-        hide=1
-        noctalia msg bar-show >/dev/null
-      fi
-      hinting=1
-      hints on
+    elif [ "$visible" != true ]; then
+      hide=1
+      noctalia msg bar-show >/dev/null
     fi
   else
     read -r _ panel _ <<<"$(state)"
     if [ "$panel" != true ]; then
       shown=1
       noctalia msg panel-open "$sheet" >/dev/null
+      hinting=1
+      hints on
     fi
     shown=${shown:-skipped}
   fi

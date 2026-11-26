@@ -38,9 +38,9 @@ Systems are flake-only: channels are disabled, and `<nixpkgs>` (e.g. for
 
 The desktop is niri with the Noctalia shell. Its bar hides when windows need
 the space, and shows whenever something drops from it. Super is the leader
-key: tap it alone for the Control Center, hold it and the bar peeks out with
-each button's shortcut on it; keep holding and the rest show, until you let
-go (`smudgenix.desktop.leader`).
+key: tap it alone for the Control Center, hold it and the bar peeks out; keep
+holding and its shortcuts show, on the bar's buttons and below, until you
+let go (`smudgenix.desktop.leader`).
 Super+Shift+/ lists every shortcut.
 
 ## Userland only (any Nix-enabled home)

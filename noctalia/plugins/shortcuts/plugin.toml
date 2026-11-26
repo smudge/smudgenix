@@ -6,8 +6,8 @@ author      = "smudgenix"
 icon        = "keyboard"
 description = "Super's shortcuts, while you hold it (smudgenix.desktop.leader): in a panel, and on the bar's buttons."
 
-# A button that opens something (its `actions`), and shows its shortcut while
-# Super is held.
+# A button that opens something (its `actions`), and shows its shortcut with
+# the rest of Super's.
 [[widget]]
 id    = "button"
 entry = "button.luau"

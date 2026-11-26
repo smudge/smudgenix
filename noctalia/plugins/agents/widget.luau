@@ -4,7 +4,7 @@
 -- none is at work. Click: the overlay (as Mod+A); right-click: check on them
 -- (smx ai doctor).
 --
--- While Super is held, it shows its shortcut instead (the leader key sends
+-- While Super's shortcuts show, it shows its own instead (the leader key sends
 -- "hints" "on", then "off": see nixos/desktop/leader.sh).
 
 local hints = false

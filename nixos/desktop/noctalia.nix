@@ -18,15 +18,16 @@ let
 
   # With the leader key (./leader.nix), the bar's launcher, clipboard and
   # Control Center are smudgenix's buttons, which show their shortcuts while
-  # Super is held (Noctalia's own can't). Each opens its panel, as Noctalia's
-  # do. (Worth revisiting, as a key hint on any widget, upstream.)
+  # Super's are shown (Noctalia's own can't). Each opens its panel, as
+  # Noctalia's do, under the same name, so bar lists saved from Noctalia's
+  # settings get them too. (Worth revisiting, as a key hint on any widget,
+  # upstream.)
   inherit (import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; }) keysFor;
   buttons = lib.optionalAttrs desktop.leader.enable {
     launcher = { glyph = "search"; panel = "launcher"; };
     clipboard = { glyph = "clipboard"; panel = "clipboard"; };
     control-center = { glyph = "noctalia"; panel = "control-center"; context = " home"; };
   };
-  pill = name: if buttons ? ${name} then "${name}-button" else name;
   agentsPanel = "smudgenix/agents:sessions";
 
   # smudgenix's own plugins (../../noctalia/plugins), checked the way Noctalia
@@ -165,8 +166,8 @@ let
       layer = "auto";
       smart_auto_hide = true;
       reserve_space = false;
-      start = map pill ([ "launcher" "workspaces" ] ++ lib.optional agents "agents" ++ [ "clipboard" "media" ]);
-      center = map pill [ "clock" "control-center" ];
+      start = [ "launcher" "workspaces" ] ++ lib.optional agents "agents" ++ [ "clipboard" "media" ];
+      center = [ "clock" "control-center" ];
       end = [ "tray" "network" "bluetooth" "volume" "brightness" "battery" "notifications" "session" ];
     };
 
@@ -181,7 +182,7 @@ let
       agents = { type = "smudgenix/agents:agents"; } // lib.optionalAttrs desktop.leader.enable {
         keys = keysFor.${agentsPanel} or "";
       };
-    } // lib.mapAttrs' (name: b: lib.nameValuePair (pill name) {
+    } // lib.mapAttrs (_: b: {
       type = "smudgenix/shortcuts:button";
       inherit (b) glyph;
       keys = keysFor.${b.panel} or "";

@@ -6,7 +6,7 @@
     },
     "keys": {
       "label": "Shortcut",
-      "description": "Shown while Super is held (smudgenix sets it from the keybinds)"
+      "description": "Shown with Super's shortcuts, while it's held (smudgenix sets it from the keybinds)"
     }
   }
 }

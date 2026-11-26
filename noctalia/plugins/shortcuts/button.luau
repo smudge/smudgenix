@@ -1,7 +1,7 @@
 --!nonstrict
 -- A bar button, in place of Noctalia's launcher, clipboard and Control
 -- Center pills: a glyph, and what clicking it does (its `actions`, like any
--- widget's). While Super is held, it also shows its shortcut: the leader key
+-- widget's). While Super's shortcuts show, it shows its own: the leader key
 -- (nixos/desktop/leader.sh) sends "hints" "on", then "off".
 --
 -- (Ours only because Noctalia's widgets can't show a key. A key hint on any
