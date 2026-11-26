@@ -235,43 +235,21 @@ server_state() {
   if ctl is-active --quiet "$unit" || ctl is-failed --quiet "$unit"; then echo down; else echo stopped; fi
 }
 
-# opencode's TUIs open now, as an smx.tuis: for each, its session (if it was
-# started with -s), its tmux pane's title (which the TUI sets to "OC | <its
-# session's title>", maybe cut short with "…"), and the processes it's
-# shown through, itself up (so its terminal's among them), if you can see it:
-# not in a tmux window that isn't the current one, or a tmux session with no
-# client.
+# The threads open now, in tmux sessions of their own (smx ai open), as an
+# smx.tuis: for each, its session, and the processes it's shown through, its
+# terminals' up (so the terminals are among them), if any shows it.
 tuis() {
-  local procs panes clients pid argv i id
+  local procs sessions clients
   procs=$(ps -u "$(id -u)" -o pid=,ppid=)
-  panes=$(tmux list-panes -a -F '#{pane_pid}	#{session_name}	#{window_active}	#{pane_title}' 2>/dev/null || true)
+  sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
   clients=$(tmux list-clients -F '#{client_pid}	#{session_name}' 2>/dev/null || true)
-  for pid in $(pgrep -u "$(id -u)" opencode || true); do
-    mapfile -d '' argv < "/proc/$pid/cmdline" 2>/dev/null || continue
-    case "$(basename "${argv[0]:-}")" in opencode | .opencode-wrapped) ;; *) continue ;; esac
-    id=""
-    for ((i = 1; i < ${#argv[@]}; i++)); do
-      case "${argv[i]}" in
-        serve | run | attach | acp | mcp | auth | api | service | models | export | import | stats | upgrade) continue 2 ;;
-        -s | --session) id=${argv[i + 1]:-} ;;
-        --session=*) id=${argv[i]#--session=} ;;
-      esac
-    done
-    printf '%s\t%s\n' "$pid" "$id"
-  done | jq -Rcn --arg procs "$procs" --arg panes "$panes" --arg clients "$clients" '
+  jq -cn --arg procs "$procs" --arg sessions "$sessions" --arg clients "$clients" '
     ($procs | split("\n") | map(select(. != "") | [splits(" +") | select(. != "") | tonumber])
       | map({key: (.[0] | tostring), value: .[1]}) | from_entries) as $parent
     | def up: [recurse(($parent[tostring] // 1) | select(. > 1))];
-    ($panes | split("\n") | map(select(. != "") | split("\t")
-      | {key: .[0], value: {session: .[1], active: (.[2] == "1"), title: .[3]}}) | from_entries) as $pane
-    | ($clients | split("\n") | map(select(. != "") | split("\t") | {pid: (.[0] | tonumber), session: .[1]})) as $client
-    | {type: "smx.tuis", tuis: [inputs | split("\t") | (.[0] | tonumber) as $pid | ($pid | up) as $up
-        | (first($up[] | $pane[tostring] // empty) // null) as $p
-        | {id: (if .[1] == "" then null else .[1] end),
-           title: ($p.title // null | if . and startswith("OC | ") then .[5:] else null end),
-           seen: (if $p == null then $pid | up
-                  elif $p.active then [$client[] | select(.session == $p.session) | .pid | up[]]
-                  else [] end)}]}'
+    ($clients | split("\n") | map(select(. != "") | split("\t") | {pid: (.[0] | tonumber), session: .[1]})) as $client
+    | {type: "smx.tuis", tuis: [$sessions | split("\n")[] | select(startswith("smx-")) as $name
+        | {id: $name[4:], title: null, seen: [$client[] | select(.session == $name) | .pid | up[]]}]}'
 }
 
 # watch's TUIs, while it runs: whenever they change (and at first).
