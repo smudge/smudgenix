@@ -152,7 +152,12 @@ end
 function onNotificationAction(_action, context)
   local how, id = tostring(context or ""):match("^(%a+):(.*)$")
   if how == "open" and id ~= "" then
-    noctalia.runAsync({ "smx", "ai", "open", id })
+    noctalia.runAsync({ "smx", "ai", "open", id }, function(result)
+      if result.exitCode ~= 0 then
+        local said = (result.stderr or ""):gsub("^smx ai: ", ""):gsub("%s+$", "")
+        noctalia.notifyError("Couldn't open the thread", said ~= "" and said or `smx ai open exited {result.exitCode}`)
+      end
+    end)
   elseif how == "review" then
     -- (Open, not toggle: never closing it if it's open already.)
     local open = { "noctalia", "msg", "panel-open", "smudgenix/agents:sessions" }

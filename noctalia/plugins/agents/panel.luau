@@ -135,9 +135,17 @@ local function status(thread, children)
   return "idle", 0, approved > 0 and `{approved} layer{approved == 1 and "" or "s"} with the forge` or "idle", "point", "on_surface/0.5"
 end
 
+-- What smx ai says when it can't open something, as an error (not nothing).
+local function opened(result)
+  if result.exitCode ~= 0 then
+    local said = (result.stderr or ""):gsub("^smx ai: ", ""):gsub("%s+$", "")
+    noctalia.notifyError("Couldn't open the thread", said ~= "" and said or `smx ai open exited {result.exitCode}`)
+  end
+end
+
 -- Opens a thread: its TUI, and a shell where its work is.
 local function enter(thread)
-  noctalia.runAsync({ "smx", "ai", "open", thread.id, "--shell" })
+  noctalia.runAsync({ "smx", "ai", "open", thread.id, "--shell" }, opened)
   panel.close()
 end
 
