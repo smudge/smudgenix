@@ -103,14 +103,15 @@ when an agent needs you or fails. Mod+A (or a click on it) shows where your
 threads of work are, in the project you're in (Tab for others, or all): needs
 you (a permission or a question, layers to review, an agent stuck, a
 failure), working, done (back since you looked), or idle. It only shows:
-Enter takes you where the thread is, its OpenCode TUI and a shell where its
-work is (`smx ai open <session> --shell`), and you act there, with the tools
-that already do it. `smx ai new`, `reply`, `park`, `close`, `status`, `watch`
-and `open` work from a terminal. Closing a thread archives its session
-(nothing's deleted), and `smx ai history` shows your threads day by day,
-closed ones too: when, in which project, how they ended (what came of their
-stacks) and what they cost, subagents included (`--days`, `--since`,
-`--project`, `--json`).
+Enter takes you where the thread is: a terminal of its own (a tmux session,
+`smx-<session>`, that `smx ai open <session>` makes the first time), with its
+OpenCode TUI and, beside it, a shell where its work is; you act there, with
+the tools that already do it. `smx ai new`, `reply`, `park`, `close`,
+`status`, `watch` and `open` work from a terminal. Closing a thread archives
+its session (nothing's deleted) and ends its tmux session, and `smx ai
+history` shows your threads day by day, closed ones too: when, in which
+project, how they ended (what came of their stacks) and what they cost,
+subagents included (`--days`, `--since`, `--project`, `--json`).
 
 What you decide goes in a decision log: one line each, like a changelog, kept
 privately in `~/.local/share/smudgenix/decisions.jsonl`. A line is a

@@ -10,10 +10,11 @@
 -- - Done: back since you looked, or its agent says it's done.
 -- - Idle: the rest (collapsed to a count).
 --
--- Enter opens a thread: its TUI, and a shell where its work is (smx ai shell:
--- its stack, to diff, check and approve). Agents' provisional calls, to
--- confirm or overturn, open in a terminal too (smx ai log). Nothing here
--- changes anything: it runs smx ai open, shell and log, and nothing else.
+-- Enter opens a thread, in a terminal of its own (smx ai open): its TUI, and
+-- beside it a shell where its work is (smx ai shell: its stack, to diff, check
+-- and approve). Agents' provisional calls, to confirm or overturn, open in a
+-- terminal too (smx ai log). Nothing here changes anything: it runs smx ai
+-- open and log, and nothing else.
 
 local open = false
 local selected = 1
@@ -145,7 +146,7 @@ end
 
 -- Opens a thread: its TUI, and a shell where its work is.
 local function enter(thread)
-  noctalia.runAsync({ "smx", "ai", "open", thread.id, "--shell" }, opened)
+  noctalia.runAsync({ "smx", "ai", "open", thread.id }, opened)
   panel.close()
 end
 

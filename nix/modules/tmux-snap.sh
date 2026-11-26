@@ -119,6 +119,8 @@ restore() {
 case "${1:-}" in
   closed)
     session=$2
+    # (A thread's own, smx ai's to keep or end: not a terminal of yours.)
+    case "$session" in smx-*) exit 0 ;; esac
     [ "$(tmux display-message -p -t "=$session:" '#{session_attached}' 2>/dev/null)" = 0 ] || exit 0
     if idle "$session"; then
       snapshot "$session" "$closed/$(date +%s)-$(server_start)-$session"
@@ -142,6 +144,7 @@ case "${1:-}" in
     start=$(server_start)
     if [ -n "$start" ]; then
       tmux list-sessions -F '#{session_name}' | while read -r session; do
+        case "$session" in smx-*) continue ;; esac
         snapshot "$session" "$open/$start-$session"
       done
     fi

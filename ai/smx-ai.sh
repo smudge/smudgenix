@@ -73,8 +73,9 @@ Agents (OpenCode), as part of the desktop.
                           default, this week)
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
-  open <session> [--shell] Show a session: its TUI's window, or a new one
-                          (--shell: and a terminal where its work is)
+  open <session>          A thread, in a tmux session of its own: its TUI,
+                          and a shell where its work is (its window, or a
+                          new one)
   shell <session>         A shell where a thread's work is: its workspace
                           (its stack shown), else its folder
   allow <request> [--always]
@@ -392,36 +393,16 @@ ancestors() {
   done
 }
 
-# opencode TUIs on a session (started with -s/--session <id>).
-tuis_on() {
-  local pid argv i
-  for pid in $(pgrep -u "$(id -u)" -f -- "$1" || true); do
-    mapfile -d '' argv < "/proc/$pid/cmdline" 2>/dev/null || continue
-    case "$(basename "${argv[0]:-}")" in opencode | .opencode-wrapped) ;; *) continue ;; esac
-    for ((i = 1; i < ${#argv[@]}; i++)); do
-      case "${argv[i]}" in
-        -s | --session) [ "${argv[i + 1]:-}" = "$1" ] && echo "$pid" ;;
-        --session="$1") echo "$pid" ;;
-      esac
-    done
-  done
-}
-
-# The tmux pane (session:window.pane) a process runs in, if any.
-pane_of() {
-  local panes p
-  panes=$(tmux list-panes -a -F '#{pane_pid} #{session_name}:#{window_index}.#{pane_index}' 2>/dev/null) || return 1
-  for p in $(ancestors "$1"); do
-    awk -v p="$p" '$1 == p { print $2; found = 1; exit } END { exit !found }' <<<"$panes" && return
-  done
-  return 1
-}
+# A thread's own tmux session: its TUI and a shell where its work is, side by
+# side, in one terminal. smx ai opens only these, never guessing at TUIs you
+# opened yourself (and tmux-snap leaves them be).
+tmux_session_of() { echo "smx-$1"; }
 
 # The niri window showing a tmux session (its client's terminal), if any.
 window_of_tmux_session() {
   local windows client p
   windows=$(niri msg --json windows 2>/dev/null) || return 1
-  for client in $(tmux list-clients -t "$1" -F '#{client_pid}' 2>/dev/null); do
+  for client in $(tmux list-clients -t "=$1" -F '#{client_pid}' 2>/dev/null); do
     for p in $(ancestors "$client"); do
       jq -e --argjson p "$p" 'map(select(.pid == $p)) | first | .id' <<<"$windows" && return
     done
@@ -429,86 +410,57 @@ window_of_tmux_session() {
   return 1
 }
 
-# tmux panes showing a session's TUI by title (one started without -s): "OC |
-# <its title>", maybe cut short with "…".
-panes_titled() {
-  local pane title
-  [ -n "$1" ] || return 0
-  tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}	#{pane_title}' 2>/dev/null \
-    | while IFS=$'\t' read -r pane title; do
-        case "$title" in "OC | "*) title=${title#OC | } ;; *) continue ;; esac
-        if [ "${title%…}" != "$title" ]; then
-          [[ $1 == "${title%…}"* ]] && echo "$pane"
-        elif [ "$1" = "$title" ]; then
-          echo "$pane"
-        fi
-      done
-}
-
-# Shows a tmux pane, in its client's window, if it has one.
-focus_pane() {
-  local window
-  window=$(window_of_tmux_session "${1%%:*}") || return 1
-  tmux select-window -t "${1%.*}" && tmux select-pane -t "$1"
-  niri msg action focus-window --id "$window"
-}
-
-open_tui() {
-  local id=$1 session dir pid pane panes
-  [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
-  session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
-  [ -n "$session" ] || die "no session $id" 4
+# Where a thread's work is: its workspace, if it has a stack; else its
+# session's folder.
+work_dir() {
+  local file dir session
+  file=$(thread_file "$1")
+  if [ -f "$file" ]; then
+    dir=$(jq -r '.workspace // empty' "$file")
+    if [ -n "$dir" ] && [ -d "$dir" ]; then echo "$dir"; return; fi
+  fi
+  session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$1" | jq -c '.data // empty') || true
+  [ -n "$session" ] || die "no session $1 (or OpenCode's server isn't reachable)" 4
   dir=$(jq -r '.location.directory // empty' <<<"$session")
-
-  panes=$(for pid in $(tuis_on "$id"); do pane_of "$pid" || true; done; panes_titled "$(jq -r '.title // empty' <<<"$session")")
-  for pane in $panes; do
-    focus_pane "$pane" && return
-  done
-
-  # (Not on screen: in a new terminal, its TUI if it has one.)
-  for pane in $panes; do
-    { tmux select-window -t "${pane%.*}" && tmux select-pane -t "$pane"; } || continue
-    setsid -f xdg-terminal-exec tmux attach-session -t "${pane%%:*}" </dev/null &>/dev/null
-    return
-  done
-  cd "${dir:-$HOME}" 2>/dev/null || cd "$HOME"
-  setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
+  [ -n "$dir" ] && [ -d "$dir" ] || die "session $1's folder (${dir:-none}) isn't there" 4
+  echo "$dir"
 }
 
-# open: a session's TUI (see open_tui); with --shell, a terminal in its
-# workspace too (smx ai shell).
+# open: a thread, in its own tmux session (made the first time: its TUI, and
+# smx ai shell beside it): its window if it's on screen, else in a new
+# terminal.
 open_session() {
-  local id="" shell=""
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --shell) shell=1 ;;
-      -*) die "usage: smx ai open <session> [--shell]" ;;
-      *) [ -z "$id" ] || die "usage: smx ai open <session> [--shell]"; id=$1 ;;
-    esac
-    shift
-  done
-  [ -n "$id" ] || die "usage: smx ai open <session> [--shell]"
-  open_tui "$id"
-  [ -z "$shell" ] || setsid -f xdg-terminal-exec "$0" shell "$id" </dev/null &>/dev/null
+  local id=${1:-} name dir window self
+  [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai open <session>"
+  [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
+  name=$(tmux_session_of "$id")
+  if ! tmux has-session -t "=$name" 2>/dev/null; then
+    dir=$(work_dir "$id")
+    self=$(readlink -f "$0" 2>/dev/null) && [ -x "$self" ] || self=$(command -v smx-ai)
+    tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$opencode" -s "$id" \
+      || die "couldn't start tmux session $name"
+    tmux split-window -h -d -l 40% -t "=$name:" -c "$dir" "$self" shell "$id" || true
+  fi
+  if window=$(window_of_tmux_session "$name"); then
+    niri msg action focus-window --id "$window"
+    return
+  fi
+  setsid -f xdg-terminal-exec tmux attach-session -t "=$name" </dev/null &>/dev/null
 }
 
 # shell: a shell where a thread's work is: its workspace, if it has a stack
 # (shown first), else its folder. What you do there is yours: jj, gh, and
 # smx ai approve|check|sync.
 shell_command() {
-  local id=${1:-} dir="" file session
+  local id=${1:-} dir file
   [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai shell <session>"
+  dir=$(work_dir "$id")
+  cd "$dir" || die "no folder $dir" 4
   file=$(thread_file "$id")
-  if [ -f "$file" ] && [ -d "$(jq -r .workspace "$file")" ]; then
-    dir=$(jq -r .workspace "$file")
+  if [ -f "$file" ] && [ "$dir" = "$(jq -r '.workspace // empty' "$file")" ]; then
     stack_show "$id" || true
     echo "${D}smx ai approve $id <layer>  ·  smx ai check $id [<layer>]  ·  smx ai sync $id  ·  jj diff -r <layer>${N}"
-  else
-    session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
-    [ -n "$session" ] || die "no session $id" 4
-    dir=$(jq -r '.location.directory // empty' <<<"$session")
   fi
-  cd "${dir:-$HOME}" || die "no folder $dir" 4
   exec "${SHELL:-bash}" -i
 }
 
@@ -1678,11 +1630,14 @@ close_thread() {
   fi
   if [ "$(jq -r '.time.archived // empty' <<<"$sess")" != "" ]; then
     echo "${D}Nothing to do: it's closed already.${N}"
+    tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
     return
   fi
   server_curl -sf --max-time 10 -X PATCH -H 'Content-Type: application/json' -d '{"archived": true}' \
     "$(server_url)/api/session/$session" >/dev/null || die "couldn't close session $session"
   echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")${decision:+ (${decision}ed)}"
+  # (Its tmux session too, last: you may be in it.)
+  tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
 }
 
 # A folder's project, as watch names them: its repository's (main checkout's)
