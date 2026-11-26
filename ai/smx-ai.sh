@@ -49,8 +49,6 @@ Agents (OpenCode), as part of the desktop.
   log [--project <name> | --all] [--thread <session>] [--current] [--json]
                           The decision log, newest first (--current: what
                           stands now, and what agents asked you)
-  ask …                   (For agents, through smudgenix's OpenCode plugin:
-                          a question for you, waiting in the log)
   stack <session> [--json] A thread's stack: its layers, bottom first
   stack diff <session> <layer>
                           A layer's change
@@ -75,7 +73,10 @@ Agents (OpenCode), as part of the desktop.
                           default, this week)
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
-  open <session>          Show a session: its TUI's window, or a new one
+  open <session> [--shell] Show a session: its TUI's window, or a new one
+                          (--shell: and a terminal where its work is)
+  shell <session>         A shell where a thread's work is: its workspace
+                          (its stack shown), else its folder
   allow <request> [--always]
                           Allow what an agent asked to do (--always: and
                           the like, in its project, from now on)
@@ -452,9 +453,8 @@ focus_pane() {
   niri msg action focus-window --id "$window"
 }
 
-open_session() {
-  local id=${1:-} session dir pid pane panes
-  [ -n "$id" ] || die "usage: smx ai open <session>"
+open_tui() {
+  local id=$1 session dir pid pane panes
   [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
   session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
   [ -n "$session" ] || die "no session $id" 4
@@ -473,6 +473,43 @@ open_session() {
   done
   cd "${dir:-$HOME}" 2>/dev/null || cd "$HOME"
   setsid -f xdg-terminal-exec tmux new-session "$opencode" -s "$id" </dev/null &>/dev/null
+}
+
+# open: a session's TUI (see open_tui); with --shell, a terminal in its
+# workspace too (smx ai shell).
+open_session() {
+  local id="" shell=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --shell) shell=1 ;;
+      -*) die "usage: smx ai open <session> [--shell]" ;;
+      *) [ -z "$id" ] || die "usage: smx ai open <session> [--shell]"; id=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$id" ] || die "usage: smx ai open <session> [--shell]"
+  open_tui "$id"
+  [ -z "$shell" ] || setsid -f xdg-terminal-exec "$0" shell "$id" </dev/null &>/dev/null
+}
+
+# shell: a shell where a thread's work is: its workspace, if it has a stack
+# (shown first), else its folder. What you do there is yours: jj, gh, and
+# smx ai approve|check|sync.
+shell_command() {
+  local id=${1:-} dir="" file session
+  [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai shell <session>"
+  file=$(thread_file "$id")
+  if [ -f "$file" ] && [ -d "$(jq -r .workspace "$file")" ]; then
+    dir=$(jq -r .workspace "$file")
+    stack_show "$id" || true
+    echo "${D}smx ai approve $id <layer>  ·  smx ai check $id [<layer>]  ·  smx ai sync $id  ·  jj diff -r <layer>${N}"
+  else
+    session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$id" | jq -c '.data // empty') || true
+    [ -n "$session" ] || die "no session $id" 4
+    dir=$(jq -r '.location.directory // empty' <<<"$session")
+  fi
+  cd "${dir:-$HOME}" || die "no folder $dir" 4
+  exec "${SHELL:-bash}" -i
 }
 
 # --- the store ----------------------------------------------------------------
@@ -754,36 +791,6 @@ log_command() {
   [ "$(jq '(.current | length) + (.briefs | length)' <<<"$folded")" -gt 0 ] || echo "${D}Nothing stands yet${project:+ for $project}.${N}"
 }
 
-# ask: what an agent asks you (through smudgenix's OpenCode plugin): a
-# question, its options, its pick. It waits for your answer (smx ai decide
-# "<line>" --answers <id>), in the decision log.
-ask_command() {
-  local session="" project="" thread="" question="" pick="" serves="" options="[]" brief
-  local usage="usage: smx ai ask --session <session> --thread <session> [--project <name>] --question \"<question>\" --option \"<option>[: why]\"… [--pick <n>] [--serves <id>]"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --session) session=${2:-}; shift ;;
-      --thread) thread=${2:-}; shift ;;
-      --project) project=${2:-}; shift ;;
-      --question) question=${2:-}; shift ;;
-      --option) one_line "an option" "${2:-}"; options=$(jq -c --arg o "$2" '. + [{text: $o}]' <<<"$options"); shift ;;
-      --pick) pick=${2:-}; shift ;;
-      --serves) serves=${2:-}; shift ;;
-      *) die "$usage" ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] && [ -n "$thread" ] || die "$usage"
-  [ -n "$project" ] || project=$(project_of "$PWD")
-  one_line "the question" "$question"
-  [ -z "$pick" ] || { [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "$(jq length <<<"$options")" ]; } || die "--pick is one of the options, by number"
-  brief=$(jq -cn --arg s "$session" --arg t "$thread" --arg p "$project" --arg q "$question" --argjson o "$options" \
-    --arg pick "$pick" --arg serves "$serves" \
-    '{session: $s, scope: "thread", project: $p, thread: $t, question: $q, options: $o,
-      pick: (if $pick == "" then null else ($pick | tonumber) - 1 end)} + (if $serves == "" then {} else {serves: $serves} end)')
-  append_entry "$brief_log" q "$brief"
-}
-
 # The fold, as agents get it (smudgenix's OpenCode plugin adds it to their
 # context): what stands, and how to keep to it.
 agent_context() {
@@ -797,7 +804,7 @@ agent_context() {
     "",
     "These are the person'"'"'s decisions, folded from an append-only log: what stands now. Work within them.",
     "- Direction says where the work is going; constraints are musts; open lines are deliberately undecided: do not settle them yourself.",
-    "- When a choice is a judgment call (a tradeoff the person would care about, hard to reverse, or nothing below covers it), call the smudgenix_ask tool with the question, two or three one-line options and your pick, then stop and end your turn: the answer comes back to you.",
+    "- When a choice is a judgment call (a tradeoff the person would care about, hard to reverse, or nothing below covers it), ask the person with your question tool: one question, two to four one-line options, your recommendation first with \"(Recommended)\" after its label. What they answer is recorded in the decision log as their decision; carry on in line with it.",
     "- A small, reversible call within the direction and constraints: make it, and record it with smudgenix_decide (provisional until the person confirms it). If it would break a constraint, ask instead.",
     "- Never write decisions into files, plans or commit bodies: the log is where they live.",
     "- End every turn by calling smudgenix_pause with why you stopped: decision (you asked something), uncertain (unsure how to go on), conflict (something you were told conflicts with what stands), failing (a check or build fails and you can'"'"'t fix it), lead (as many layers wait for approval as you may get ahead), appetite (it'"'"'s costing more than it'"'"'s worth) or done (all of it is done), and a line on it.",
@@ -2058,6 +2065,7 @@ case "${1:-}" in
   watch) shift; watch_command "$@" ;;
   status) shift; status "$@" ;;
   open) shift; open_session "$@" ;;
+  shell) shift; shell_command "$@" ;;
   allow) shift; allow "$@" ;;
   deny) shift; [ "$#" -le 1 ] || die "usage: smx ai deny <request>"; answer deny reject "${1:-}" ;;
   allowed) shift; allowed "$@" ;;
@@ -2066,7 +2074,6 @@ case "${1:-}" in
   confirm) shift; confirm_command "$@" ;;
   withdraw) shift; withdraw_command "$@" ;;
   log) shift; log_command "$@" ;;
-  ask) shift; ask_command "$@" ;;
   stack) shift; stack_command "$@" ;;
   approve) shift; approve_command "$@" ;;
   sync) shift; sync_command "$@" ;;

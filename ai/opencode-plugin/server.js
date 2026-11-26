@@ -6,11 +6,11 @@
 //   server runs without (see ../../nixos/ai.nix). The sandbox, given the
 //   shell they'd have run in, runs them in it (see ../sandbox.sh).
 // - Gives agents the decision log: what stands for their project and thread
-//   (`smx ai log --for-agent`), in their context on every request; and two
-//   tools, to ask you (`smx ai ask`) and to make a small call provisionally
-//   (`smx ai decide --by-agent`). smx ai does the work; this only connects
-//   it to OpenCode. (Agents' own commands can't write the log: their sandbox
-//   can't.)
+//   (`smx ai log --for-agent`), in their context on every request; a tool to
+//   make a small call provisionally (`smx ai decide --by-agent`); and what you
+//   answer to OpenCode's own question tool, recorded as your decision. smx ai
+//   does the work; this only connects it to OpenCode. (Agents' own commands
+//   can't write the log: their sandbox can't.)
 import { execFile } from "node:child_process";
 import { statSync } from "node:fs";
 
@@ -75,35 +75,27 @@ export default {
       }
     });
 
+    // What you answer an agent's question (OpenCode's question tool) is your
+    // decision, in its thread: recorded as yours, not by the agent.
+    await ctx.tool.hook("execute.after", async (event) => {
+      if (event.tool !== "question" || event.status !== "completed") return;
+      try {
+        const questions = event.input?.questions ?? [];
+        const answers = event.result?.output?.answers ?? event.result?.metadata?.answers ?? [];
+        const { dir, thread } = await where(event.sessionID);
+        for (const [i, q] of questions.entries()) {
+          const said = (answers[i] ?? []).map((a) => String(a).replace(/\s*\(Recommended\)\s*$/i, "")).filter(Boolean);
+          if (!said.length) continue;
+          const line = `${q.header || q.question}: ${said.join(", ")}`.replace(/\s+/g, " ").slice(0, 200);
+          await run(smxAi, ["decide", line, "--why", `Asked: ${q.question}`.replace(/\s+/g, " ").slice(0, 300), "--thread", thread], dir);
+        }
+      } catch (error) {
+        console.error(`smudgenix: couldn't record an answer: ${error.message}`);
+      }
+    });
+
     await ctx.tool.transform((editor) => {
       editor.namespace({ name: "smudgenix", description: "The person's decision log (smudgenix)" });
-      editor.add({
-        name: "ask",
-        description:
-          "Ask the person to decide a judgment call: a tradeoff they'd care about, something hard to reverse, " +
-          "or a choice nothing in the decision log covers. Give one question, two or three one-line options, and " +
-          "your pick. Then stop and end your turn: their answer comes back to you as a message.",
-        input: {
-          type: "object",
-          properties: {
-            question: { type: "string", description: "One line" },
-            options: { type: "array", items: { type: "string", description: "One line" }, minItems: 2, maxItems: 4 },
-            pick: { type: "integer", description: "Your recommendation: its number, from 1" },
-            serves: { type: "string", description: "The id of the direction or decision it's for, if any" },
-          },
-          required: ["question", "options", "pick"],
-          additionalProperties: false,
-        },
-        options: { namespace: "smudgenix" },
-        execute: async (input, context) => {
-          const { dir, thread } = await where(context.sessionID);
-          const args = ["ask", "--session", context.sessionID, "--thread", thread, "--question", input.question,
-            ...input.options.flatMap((o) => ["--option", o]), "--pick", String(input.pick)];
-          if (input.serves) args.push("--serves", input.serves);
-          const brief = JSON.parse(await run(smxAi, args, dir));
-          return { content: `Asked (${brief.id}). Call smudgenix_pause with reason decision, then end your turn: the person's answer will come back to you.` };
-        },
-      });
       // A thread's stack (smx ai stack): its agent commits and revises layers
       // through these, never with git or jj itself.
       editor.add({
@@ -155,7 +147,7 @@ export default {
       editor.add({
         name: "pause",
         description:
-          "Say why you're stopping, as the last thing in every turn: decision (you asked the person something), " +
+          "Say why you're stopping, as the last thing in every turn: decision (you need the person to decide something), " +
           "uncertain (unsure how to go on), conflict (what you were told conflicts with what stands), failing " +
           "(a check or build fails and you can't fix it), lead (as many layers wait for approval as you may get " +
           "ahead), appetite (it's costing more than it's worth) or done (all of it is done). Then end your turn.",
@@ -180,7 +172,7 @@ export default {
         description:
           "Record a small, reversible call you made within the direction and constraints in the decision log, " +
           "so the person can confirm or overturn it. One line, and why in a few words. Not for judgment calls " +
-          "(ask), nor for anything that would break a constraint.",
+          "(ask the person with your question tool), nor for anything that would break a constraint.",
         input: {
           type: "object",
           properties: {
