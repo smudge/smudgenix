@@ -994,6 +994,16 @@ stack_show() {
   [ "${2:-}" != --json ] || json=1
   view=$(stack_view "$session")
   if [ -n "$json" ]; then echo "$view"; return; fi
+  # (Each layer's check, as it stands: its result, and its log.)
+  local command repo_dir checks layer_commit
+  repo_dir=$(jq -r .repo <<<"$view")
+  command=$(check_command_of "$(jq -r .project <<<"$view")" "$(jq -r .workspace <<<"$view")" 2>/dev/null) || command=""
+  checks=$(jq -r '.layers[].commit' <<<"$view" | while read -r layer_commit; do
+    [ -n "$command" ] || continue
+    jq -cn --arg c "$layer_commit" --arg k "$(check_result "$(git -C "$repo_dir" rev-parse "$layer_commit^{tree}")" "$command")" \
+      'if $k == "" then empty else {($c): ($k | fromjson)} end'
+  done | jq -cs 'add // {}')
+  view=$(jq -c --argjson k "$checks" '.layers |= map(. + {check: $k[.commit]})' <<<"$view")
   jq -r --arg D "$D" --arg N "$N" --arg G "$G" --arg Y "$Y" --arg R "$R" '
     "\($D)on \(.trunk), in \(.workspace)\($N)",
     (if .layers == [] then "\($D)No layers yet.\($N)" else empty end),
@@ -1003,6 +1013,8 @@ stack_show() {
          elif .state == "changed" then "  \($Y)changed since you approved it\($N)" else "" end)
       + (if .conflict then "  \($R)conflicted\($N)" else "" end)
       + (if .empty then "  \($Y)empty\($N)" else "" end)
+      + (if .check.state == "passed" then "  \($G)✓ check\($N)" elif .check.state == "failed" then "  \($R)✗ check\($N) \($D)\(.check.log)\($N)"
+         elif .check.state == "running" then "  \($D)checking…\($N)" else "" end)
       + "  \($D)\(.change[0:8])\($N)"),
     (if .revising then "\($Y)Revising layer \(.revising[0:8]).\($N)" else empty end),
     (if .uncommitted then "\($D)And changes not committed yet.\($N)" else empty end),
