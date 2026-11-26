@@ -382,7 +382,7 @@ window_of_tmux_session() {
   windows=$(niri msg --json windows 2>/dev/null) || return 1
   for client in $(tmux list-clients -t "=$1" -F '#{client_pid}' 2>/dev/null); do
     for p in $(ancestors "$client"); do
-      jq -e --argjson p "$p" 'map(select(.pid == $p)) | first | .id' <<<"$windows" && return
+      jq -e --argjson p "$p" 'first(.[] | select(.pid == $p) | .id)' <<<"$windows" && return
     done
   done
   return 1
