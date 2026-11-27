@@ -380,7 +380,8 @@ open_session() {
     niri msg action focus-window --id "$window"
     return
   fi
-  setsid -f xdg-terminal-exec tmux attach-session -t "=$name" </dev/null &>/dev/null
+  # (Its own app-id, so niri opens it full width: see ../nixos/desktop/niri.nix.)
+  setsid -f xdg-terminal-exec --app-id=smudgenix.agent tmux attach-session -t "=$name" </dev/null &>/dev/null
 }
 
 # shell: a shell where a thread's work is: its folder.

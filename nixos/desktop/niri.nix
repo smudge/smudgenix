@@ -67,6 +67,12 @@ let
         open-floating true
     }
 
+    // A session smx ai opens (its TUI and a shell, side by side): full width.
+    window-rule {
+        match app-id=r#"^smudgenix\.agent$"#
+        open-maximized true
+    }
+
     window-rule {
         match app-id=r#"^${lib.escapeRegex filePickerId}$"#
         open-floating true

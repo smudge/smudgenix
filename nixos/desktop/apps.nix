@@ -20,6 +20,23 @@ let
   '') (lib.unique (builtins.attrValues apps)) + "touch $out");
 
   apps = { inherit (cfg) browser terminal fileManager imageViewer pdfViewer; };
+
+  # How terminals whose desktop entry doesn't say so take an app-id, so
+  # `xdg-terminal-exec --app-id=…` sets one (niri's window rules match on it:
+  # the file picker's, and smx ai's sessions'). Added to a copy of the entry,
+  # which takes the original's place.
+  appIdArgs = { alacritty = "--class="; foot = "--app-id="; };
+  terminalEntry = desktopEntry cfg.terminal;
+  terminalWithAppId = lib.hiPrio (pkgs.runCommand "${lib.getName cfg.terminal}-desktop-entry" { } ''
+    entry=${cfg.terminal}/share/applications/${terminalEntry}
+    mkdir -p $out/share/applications
+    if grep -q '^X-TerminalArgAppId=' "$entry"; then
+      cp "$entry" $out/share/applications/
+    else
+      sed '/^\[Desktop Entry\]$/a X-TerminalArgAppId=${appIdArgs.${lib.getName cfg.terminal}}' \
+        "$entry" > $out/share/applications/${terminalEntry}
+    fi
+  '');
 in
 {
   options.smudgenix.apps = {
@@ -73,7 +90,8 @@ in
       papers = "org.gnome.Papers.desktop";
     };
 
-    environment.systemPackages = lib.unique (builtins.attrValues apps);
+    environment.systemPackages = lib.unique (builtins.attrValues apps)
+      ++ lib.optional (appIdArgs ? ${lib.getName cfg.terminal}) terminalWithAppId;
     system.checks = [ checkEntries ];
 
     # Default apps by file type. (Hosts can override any one of them.)
