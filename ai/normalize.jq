@@ -11,7 +11,7 @@
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
 #
-# where <session> is {id, title, dir, project, parent, updated, last, about,
+# where <session> is {id, title, dir, project, root, parent, updated, last, about,
 # open, terminals, state, unseen, permissions, forms}: its state is
 # needs-permission, needs-input, working, done, failed or idle; unseen is
 # whether it's finished since anyone last looked at it; updated is when (in
@@ -19,8 +19,8 @@
 # about is what it's about (its latest compaction's objective), in a line, or
 # null; open is whether it's open (its tmux session, smx ai open), and
 # terminals the processes it's on screen through (its terminal's among them),
-# if any; and project is its
-# repository's name, or null.
+# if any; and project is its repository's name, or null, and root its
+# folder (the main checkout's), or null.
 #
 # A permission is {id, action, resources, save, cwd}: what it'd do (e.g.
 # "shell" and the command, or "edit" and the files), the patterns allowing it
@@ -41,7 +41,7 @@ def tuis_on($tuis):
 
 def public($tuis):
   tuis_on($tuis) as $on
-  | {id, title, dir, project, parent, updated, started, last, about,
+  | {id, title, dir, project, root, parent, updated, started, last, about,
    open: ($on | length > 0), terminals: ([$on[].seen[]] | unique),
    state: (if (.permissions | length) > 0 then "needs-permission"
            elif (.forms | length) > 0 then "needs-input"

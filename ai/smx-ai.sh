@@ -28,8 +28,9 @@ Usage: smx ai <command>
 
 Agents (OpenCode), as part of the desktop.
 
-  new [--dir <folder>] [--tui] "<what to do>"
-                          Start a thread of work, in the background (or a TUI)
+  new [--dir <folder>] ["<what to do>"]
+                          Start a session in a folder (by default this one),
+                          and open it (as open does)
   close <session>         End it (OpenCode archives it)
   context --json          Where you are: the focused window's project
 
@@ -123,24 +124,26 @@ shape='def shape:
      unseen: ((($running | not) and $idle > (.time.viewed // 0)) and .outcome != "interrupted")};'
 
 # Sessions (JSON lines in and out), filled in: their project (the name of
-# their folder's repository, its main checkout's, or else of the folder), their
+# their folder's repository, its main checkout's, or else of the folder) and
+# its folder (root), their
 # latest reply and compaction, and what the running ones wait on.
 filled() {
   local session id dir running project reply compaction requests
-  local -A projects=()
+  local -A projects=() roots=()
   while IFS= read -r session; do
     [ -n "$session" ] || continue
     IFS=$'\t' read -r id dir running < <(jq -r '[.id, (.dir // ""), .running] | @tsv' <<<"$session")
     if [ -z "${projects[$dir]+x}" ]; then
       project=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && project=${project%/.git} || project=$dir
+      roots[$dir]=$project
       if [ "$project" = "$HOME" ]; then projects[$dir]="~"; else projects[$dir]=$(basename "$project"); fi
     fi
     reply=$(server_get "/api/session/$id/message?limit=10&order=desc&type=assistant" \
       | jq -c 'first(.data[].content[]? | select(.type == "text" and (.text // "") != "") | .text) [0:4000] // null' 2>/dev/null) || reply=null
     compaction=$(server_get "/api/session/$id/message?limit=3&order=desc&type=compaction" \
       | jq -c 'first(.data[] | select(.status == "completed") | .summary) [0:8000] // null' 2>/dev/null) || compaction=null
-    session=$(jq -c --arg p "${projects[$dir]}" --argjson r "${reply:-null}" --argjson c "${compaction:-null}" \
-      '. + {project: (if $p == "" or $p == "." then null else $p end), last: $r, about: $c}' <<<"$session")
+    session=$(jq -c --arg p "${projects[$dir]}" --arg root "${roots[$dir]}" --argjson r "${reply:-null}" --argjson c "${compaction:-null}" \
+      '. + {project: (if $p == "" or $p == "." then null else $p end), root: ($root | select(. != "") // null), last: $r, about: $c}' <<<"$session")
     if [ "$running" = true ]; then
       requests=$(server_get "/api/session/$id/permission" | jq -c '.data[]' | with_cwd "$dir" | jq -cs .) || requests='[]'
       jq -c --argjson p "$requests" \
@@ -565,39 +568,31 @@ prompt_session() {
     -d "$(jq -cn --arg t "$2" '{text: $t}')" "$(server_url)/api/session/$1/prompt" >/dev/null
 }
 
-# new: starts a thread of work in a folder (by default this one), in the
-# background (it comes back when it's done, or needs you), or --tui in a
-# terminal too.
+# new: starts a session in a folder (by default this one), with what to do if
+# you say, and opens it (on the desktop: see open).
 new_thread() {
-  local dir=$PWD tui="" json="" prompt="" session
-  local usage="usage: smx ai new [--dir <folder>] [--tui] [--json] \"<what to do>\""
+  local dir=$PWD prompt="" session
+  local usage="usage: smx ai new [--dir <folder>] [\"<what to do>\"]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --dir) dir=${2:-}; shift ;;
-      --tui) tui=1 ;;
-      --json) json=1 ;;
       -*) die "$usage" ;;
       *) [ -z "$prompt" ] || die "$usage"; prompt=$1 ;;
     esac
     shift
   done
-  [ -n "$prompt" ] || die "$usage"
   [ -d "$dir" ] || die "no folder $dir" 4
   dir=$(cd "$dir" && pwd)
   need_server
-  local body
-  body=$(jq -cn --arg d "$dir" '{location: {directory: $d}}')
   session=$(server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
-    -d "$body" "$(server_url)/api/session" \
+    -d "$(jq -cn --arg d "$dir" '{location: {directory: $d}}')" "$(server_url)/api/session" \
     | jq -r '.data.id // .id // empty') || true
   [ -n "$session" ] || die "couldn't start a session in $dir"
-  prompt_session "$session" "$prompt" || die "couldn't give session $session its prompt"
-  if [ -n "$json" ]; then
-    jq -cn --arg s "$session" --arg d "$dir" '{v: 1, session: $s, dir: $d}'
-  else
-    echo "${G}✓${N} Started, in the background: $session ${D}($dir)${N}"
+  if [ -n "$prompt" ]; then
+    prompt_session "$session" "$prompt" || die "couldn't give session $session its prompt"
   fi
-  [ -z "$tui" ] || open_session "$session"
+  echo "${G}✓${N} Started: $session ${D}($dir)${N}"
+  [ -z "${NIRI_SOCKET:-}" ] || open_session "$session"
 }
 
 # close: ends a thread (OpenCode archives its session).
@@ -647,11 +642,13 @@ context() {
       dir=$(readlink "/proc/$child/cwd" 2>/dev/null) || dir=""
     fi
   fi
+  local root
   if [ -n "$dir" ] && [ -d "$dir" ]; then
-    jq -cn --arg d "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")" --arg p "$(project_of "$dir")" \
-      '{v: 1, dir: $d, project: $p}'
+    root=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && root=${root%/.git} || root=$dir
+    jq -cn --arg d "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")" --arg p "$(project_of "$dir")" --arg r "$root" \
+      '{v: 1, dir: $d, project: $p, root: $r}'
   else
-    echo '{"v":1,"dir":null,"project":null}'
+    echo '{"v":1,"dir":null,"project":null,"root":null}'
   fi
 }
 

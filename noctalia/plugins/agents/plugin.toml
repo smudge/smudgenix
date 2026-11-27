@@ -1,6 +1,6 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.19.0"
+version     = "0.20.0"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
@@ -38,4 +38,4 @@ placement        = "attached"
 position         = "center"
 open_near_click  = false
 keyboard_focus   = "exclusive"
-capture_keys     = [ "Up", "Down", "Left", "Right", "k", "j", "h", "l", "Return", "Tab", "Shift+Tab", "Shift+ISO_Left_Tab" ]
+capture_keys     = [ "Up", "Down", "k", "j", "Return" ]

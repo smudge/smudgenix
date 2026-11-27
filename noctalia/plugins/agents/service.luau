@@ -1,16 +1,10 @@
 --!nonstrict
 -- Follows `smx ai watch`, publishing what agents are doing ("agents": the
--- server's state, its sessions, subagents' included, threads' stacks, and the
--- decision log: what stands, and what agents asked you) for
--- the widget and panel, and saying so when one needs you or fails, unless
--- you're looking at it (its TUI's window is focused). Finishing isn't urgent:
--- it waits in the overlay, to review.
+-- server's state, and its sessions, subagents' included) for the widget and
+-- panel, and saying so when one needs you or fails, unless you're looking at
+-- it (its window is focused).
 
 local sessions = {} -- by id
-local decisions = { current = {}, briefs = {} } -- what stands, and what agents asked you (smx ai log)
-local stacks = {} -- threads' stacks (smx ai stack)
-local pauses = {} -- each thread's latest: why its agent stopped (smx ai pause)
-local asked = nil -- the questions told about, by id (nil: none yet seen)
 local server = "stopped"
 
 local function publish()
@@ -19,7 +13,7 @@ local function publish()
     table.insert(list, session)
   end
   table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
-  noctalia.state.set("agents", { server = server, sessions = list, decisions = decisions, stacks = stacks, pauses = pauses })
+  noctalia.state.set("agents", { server = server, sessions = list })
 end
 
 -- The focused window's process, from niri's events (nil if none, or not niri).
@@ -67,8 +61,7 @@ local function notify(say, summary, body, id)
   })
 end
 
--- One that opens the overlay (Mod+A), on its session if it has one (Review,
--- or a click on it): where you answer it, or can if you miss it.
+-- One that opens the overlay (Mod+A), where the sessions are.
 local function review(say, summary, body, id)
   say(summary, body, {
     actions = { { id = "default" }, { id = "review", label = "Review" } },
@@ -121,9 +114,8 @@ end
 
 -- What changed for you, if anything, from before to after: unless you're
 -- looking at it, or said not to (the plugin's notify setting). Each new
--- request gets one, which only opens the overlay, where you answer it (so
--- one appearing as you type can't answer anything). (A subagent's finishing
--- is its parent's news, not yours.)
+-- request gets one, which opens its session, where you answer it. (A
+-- subagent's finishing is its parent's news, not yours.)
 local function tell(before, after)
   if lookingAt(after) or noctalia.getConfig("notify") == false then return end
   local asked = {}
@@ -132,7 +124,7 @@ local function tell(before, after)
   end
   for _, request in after.permissions or {} do
     if not asked[request.id] then
-      review(noctalia.notify, "Needs permission: " .. title(after), described(request), after.id)
+      notify(noctalia.notify, "Needs permission: " .. title(after), described(request), after.id)
     end
   end
   local was = before and before.state
@@ -140,8 +132,7 @@ local function tell(before, after)
   if after.state == "needs-input" then
     local f = after.forms[#after.forms]
     notify(noctalia.notify, "Asks: " .. title(after), f and f.title or nil, after.id)
-  -- (Done is news, not urgent: it waits in the overlay, to review. Failing
-  -- still says so.)
+  -- (Done isn't urgent: only failing says so.)
   elseif after.parent == nil and after.unseen and after.state == "failed" then
     table.insert(finished, after.id)
     finishedAt = finishedAt or noctalia.nowMs()
@@ -179,24 +170,6 @@ local function onLine(line)
   elseif event.type == "session" then
     tell(sessions[event.id], event)
     sessions[event.id] = event
-  elseif event.type == "stacks" then
-    stacks = event.stacks or {}
-  elseif event.type == "pauses" then
-    pauses = event.pauses or {}
-  elseif event.type == "decisions" then
-    decisions = { current = event.current or {}, briefs = event.briefs or {} }
-    -- (A new question is news: it waits on you. Not those there at first.)
-    local seen = {}
-    for _, brief in decisions.briefs do
-      seen[brief.id] = true
-      if asked and not asked[brief.id] and noctalia.getConfig("notify") ~= false then
-        local session = sessions[brief.thread] or sessions[brief.session]
-        if not (session and lookingAt(session)) then
-          review(noctalia.notify, "To decide: " .. (session and title(session) or brief.project or "an agent"), brief.question, brief.thread)
-        end
-      end
-    end
-    asked = seen
   elseif event.type == "removed" then
     sessions[event.id] = nil
   elseif event.type == "server" then

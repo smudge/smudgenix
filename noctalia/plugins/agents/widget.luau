@@ -1,8 +1,7 @@
 --!nonstrict
 -- The agents' bar widget: what they're doing (from the service), most urgent
--- first, and greyed out when nothing needs you, there's nothing to review and
--- none is at work. Click: the overlay (as Mod+A); right-click: check on them
--- (smx ai doctor).
+-- first, and greyed out when nothing needs you and none is at work. Click:
+-- the overlay (as Mod+A); right-click: check on them (smx ai doctor).
 --
 -- While Super's shortcuts show, it shows its own instead (the leader key sends
 -- "hints" "on", then "off": see nixos/desktop/leader.sh).
@@ -23,15 +22,6 @@ local function render(agents)
   local needYou = count(sessions, function(s) return s.state == "needs-permission" or s.state == "needs-input" end)
   -- (A subagent's work is its parent's; what one needs from you is yours.)
   local working = count(sessions, function(s) return s.parent == nil and s.state == "working" end)
-  -- To review: threads with layers you haven't approved, and sessions
-  -- finished since you looked.
-  local review = count(agents.stacks or {}, function(s)
-    for _, layer in s.layers or {} do
-      if layer.state ~= "approved" then return true end
-    end
-    return false
-  end)
-    + count(sessions, function(s) return s.parent == nil and s.unseen end)
 
   if agents.server == "down" then
     barWidget.setGlyph("robot-off")
@@ -43,11 +33,6 @@ local function render(agents)
     barWidget.setGlyphColor("tertiary")
     barWidget.setText(tostring(needYou))
     barWidget.setTooltip(`Agents: {needYou} waiting on you`)
-  elseif review > 0 then
-    barWidget.setGlyph("robot")
-    barWidget.setGlyphColor("secondary")
-    barWidget.setText(tostring(review))
-    barWidget.setTooltip(`Agents: {review} to review` .. (working > 0 and `, {working} at work` or ""))
   elseif working > 0 then
     -- (At work needs nothing from you: a quiet glyph, no count.)
     barWidget.setGlyph("robot")
