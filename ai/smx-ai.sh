@@ -30,8 +30,7 @@ Agents (OpenCode), as part of the desktop.
 
   new [--dir <folder>] [--tui] "<what to do>"
                           Start a thread of work, in the background (or a TUI)
-  close <session> [--accept | --discard]
-                          End it (approving or setting aside its layers)
+  close <session>         End it (OpenCode archives it)
   context --json          Where you are: the focused window's project
 
   decide "<line>" [--why "<why>"] [--kind direction|constraint|decision|open]
@@ -46,32 +45,13 @@ Agents (OpenCode), as part of the desktop.
   log [--project <name> | --all] [--thread <session>] [--current] [--json]
                           The decision log, newest first (--current: what
                           stands now, and what agents asked you)
-  stack <session> [--json] A thread's stack: its layers, bottom first
-  stack diff <session> <layer>
-                          A layer's change
-  approve <session> <layer> [--anyway]
-                          Publish it, and every layer below it, to your
-                          forge: a branch and a pull request each, chained
-                          (never on your trunk: the forge merges them)
-  check <session> [<layer>] [--command "<check>"]
-                          Run the project's check on a layer (by default the
-                          top), in a fresh copy, sandboxed (watch runs them
-                          by itself, one at a time); --command sets it
-  sync <session>          Restack onto the remote's trunk (what it's merged
-                          drops out), publishing what you approved again
-  stack commit|revise …   (For agents, through smudgenix's OpenCode plugin)
-  lead [<layers>] [--project <name>]
-                          How many layers agents may have waiting for you
-                          before they stop (by default 3)
-  pause …                 (For agents: why one stopped)
 
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
   open <session>          A thread, in a tmux session of its own: its TUI,
                           and a shell where its work is (its window, or a
                           new one)
-  shell <session>         A shell where a thread's work is: its workspace
-                          (its stack shown), else its folder
+  shell <session>         A shell where a thread's work is: its folder
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -267,18 +247,12 @@ tui_changes() {
   done
 }
 
-# watch's decisions, stacks and pauses, while it runs: at first, and whenever they
-# change; and the next layer's check, if none's running.
+# watch's decisions, while it runs: at first, and whenever they change.
 store_changes() {
-  local decided last_decided="" stacked last_stacked="" paused last_paused="" watcher=$$
+  local decided last_decided="" watcher=$$
   while [ -e "/proc/$watcher" ]; do
     decided=$(fold 2>/dev/null | jq -c '{type: "smx.decisions", current, briefs}') || decided=""
     [ -z "$decided" ] || [ "$decided" = "$last_decided" ] || { echo "$decided"; last_decided=$decided; }
-    stacked=$(stacks_json 2>/dev/null | jq -c '{type: "smx.stacks", stacks: .}') || stacked=""
-    [ -z "$stacked" ] || [ "$stacked" = "$last_stacked" ] || { echo "$stacked"; last_stacked=$stacked; }
-    paused=$(pauses_json | jq -c '{type: "smx.pauses", pauses: .}') || paused=""
-    [ -z "$paused" ] || [ "$paused" = "$last_paused" ] || { echo "$paused"; last_paused=$paused; }
-    [ -z "$stacked" ] || auto_check "$(jq -c .stacks <<<"$stacked")" >/dev/null 2>&1 &
     sleep 5
   done
 }
@@ -387,15 +361,9 @@ window_of_tmux_session() {
   return 1
 }
 
-# Where a thread's work is: its workspace, if it has a stack; else its
-# session's folder.
+# Where a thread's work is: its session's folder.
 work_dir() {
-  local file dir session
-  file=$(thread_file "$1")
-  if [ -f "$file" ]; then
-    dir=$(jq -r '.workspace // empty' "$file")
-    if [ -n "$dir" ] && [ -d "$dir" ]; then echo "$dir"; return; fi
-  fi
+  local dir session
   session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$1" | jq -c '.data // empty') || true
   [ -n "$session" ] || die "no session $1 (or OpenCode's server isn't reachable)" 4
   dir=$(jq -r '.location.directory // empty' <<<"$session")
@@ -425,19 +393,12 @@ open_session() {
   setsid -f xdg-terminal-exec tmux attach-session -t "=$name" </dev/null &>/dev/null
 }
 
-# shell: a shell where a thread's work is: its workspace, if it has a stack
-# (shown first), else its folder. What you do there is yours: jj, gh, and
-# smx ai approve|check|sync.
+# shell: a shell where a thread's work is: its folder.
 shell_command() {
-  local id=${1:-} dir file
+  local id=${1:-} dir
   [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai shell <session>"
   dir=$(work_dir "$id")
   cd "$dir" || die "no folder $dir" 4
-  file=$(thread_file "$id")
-  if [ -f "$file" ] && [ "$dir" = "$(jq -r '.workspace // empty' "$file")" ]; then
-    stack_show "$id" || true
-    echo "${D}smx ai approve $id <layer>  ·  smx ai check $id [<layer>]  ·  smx ai sync $id  ·  jj diff -r <layer>${N}"
-  fi
   exec "${SHELL:-bash}" -i
 }
 
@@ -448,35 +409,6 @@ shell_command() {
 store_dir=${SMX_AI_STORE:-${XDG_DATA_HOME:-$HOME/.local/share}/smudgenix}
 
 now_ms() { echo $(($(date +%s%N) / 1000000)); }
-
-# A change (from $2 to $3), as ./hotspots.jq takes it: its files, with
-# what's added and removed, and its added lines (at most a few thousand).
-change_json() {
-  local repo=$1 from=$2 to=$3
-  {
-    git -C "$repo" diff -M --name-status -z "$from" "$to" | while IFS= read -r -d '' status; do
-      case "$status" in
-        R* | C*) IFS= read -r -d '' _; IFS= read -r -d '' path ;;
-        *) IFS= read -r -d '' path ;;
-      esac
-      jq -cn --arg s "${status:0:1}" --arg p "$path" '{status: $s, path: $p}'
-    done | jq -cs '{statuses: .}'
-    git -C "$repo" diff -M --numstat -z "$from" "$to" | while IFS= read -r -d '' record; do
-      IFS=$'\t' read -r added removed path <<<"$record"
-      if [ -z "$path" ]; then IFS= read -r -d '' _; IFS= read -r -d '' path; fi
-      jq -cn --arg a "$added" --arg r "$removed" --arg p "$path" \
-        '{path: $p, added: ($a | tonumber? // 0), removed: ($r | tonumber? // 0)}'
-    done | jq -cs '{counts: .}'
-    git -C "$repo" diff -M -U0 --no-color "$from" "$to" | awk '
-      /^\+\+\+ / { path = substr($0, 7); next }
-      /^@@/ { hunk = $0; sub(/ @@.*/, " @@", hunk); next }
-      /^\+/ && n < 5000 { n++; print path "\t" hunk "\t" substr($0, 2, 500) }' \
-      | jq -Rcs '{lines: [split("\n")[] | select(. != "") | split("\t") | {path: .[0], hunk: .[1], text: (.[2:] | join("\t"))}]}'
-  } | jq -cs 'add | (.counts | map({key: .path, value: .}) | from_entries) as $c
-    | {files: [.statuses[] | . + ($c[.path] // {added: 0, removed: 0})], lines}'
-}
-
-# The session's latest reply: what it says it did (a claim, not evidence).
 
 # --- decisions: the log of your judgment ---------------------------------------
 
@@ -599,22 +531,13 @@ decide_command() {
   fi
   [ "$scope" != project ] || [ -n "$project" ] || die "$usage"
   [ "$by" != agent ] || [ -n "$session" ] || die "$usage"
-  # (An agent's call belongs to the layer it's working on, in a stack:
-  # landing that layer waits for you to settle it.)
-  local layer="" t repo
-  if [ "$by" = agent ] && [ -n "$thread" ] && [ -f "$(thread_file "$thread")" ]; then
-    t=$(thread_json "$thread") repo=$(jq -r .repo <<<"$t")
-    layer=$(jq -r '.revising // empty' <<<"$t")
-    [ -n "$layer" ] || layer=$(jjr -R "$(jq -r .workspace <<<"$t")" log --no-graph -r @ -T change_id 2>/dev/null) || layer=""
-  fi
-
   local entry
   entry=$(jq -cn --arg kind "$kind" --arg scope "$scope" --arg project "$project" --arg thread "$thread" \
     --arg text "$text" --arg why "$why" --arg by "$by" --arg session "$session" --arg check "$check" \
-    --arg ref "$ref" --arg answers "$answers" --arg layer "$layer" '
+    --arg ref "$ref" --arg answers "$answers" '
     def opt: if . == "" then null else . end;
     {kind: $kind, scope: $scope, project: ($project | opt), thread: ($thread | opt), text: $text, why: ($why | opt),
-     by: $by, session: ($session | opt), check: ($check | opt), ref: ($ref | opt), answers: ($answers | opt), layer: ($layer | opt)}
+     by: $by, session: ($session | opt), check: ($check | opt), ref: ($ref | opt), answers: ($answers | opt)}
     | with_entries(select(.value != null))')
   entry=$(append_entry "$decision_log" d "$entry")
 
@@ -736,745 +659,10 @@ agent_context() {
     "- When a choice is a judgment call (a tradeoff the person would care about, hard to reverse, or nothing below covers it), ask the person with your question tool: one question, two to four one-line options, your recommendation first with \"(Recommended)\" after its label. What they answer is recorded in the decision log as their decision; carry on in line with it.",
     "- A small, reversible call within the direction and constraints: make it, and record it with smudgenix_decide (provisional until the person confirms it). If it would break a constraint, ask instead.",
     "- Never write decisions into files, plans or commit bodies: the log is where they live.",
-    "- End every turn by calling smudgenix_pause with why you stopped: decision (you asked something), uncertain (unsure how to go on), conflict (something you were told conflicts with what stands), failing (a check or build fails and you can'"'"'t fix it), lead (as many layers wait for approval as you may get ahead), appetite (it'"'"'s costing more than it'"'"'s worth) or done (all of it is done), and a line on it.",
     "",
     items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose"),
     (if .briefs == [] then empty else "Asked, waiting on the person (do not decide these yourself):", (.briefs[] | "- \(.question) [\(.id)]"), "" end),
     (if .current == [] then "Nothing is decided yet for this project." else empty end)' <<<"$folded"
-  if [ -n "${2:-}" ] && [ -f "$(thread_file "$2")" ]; then
-    cat <<'EOF'
-
-# Your stack
-
-You work in a workspace of your own: your work becomes a stack of layers (one jj change each) that the person reviews from the bottom; what they approve goes to their forge as a chain of pull requests, one per layer, for the project's own review.
-- Commit each layer with the smudgenix_commit tool, with its purpose as a short commit title (72 characters at most; no attribution, no body). One purpose per layer.
-- Every layer must be safe to land on its own: it builds, its tests pass, nothing half-done (behind a flag if it must be).
-- Put the least controversial layers first (groundwork, refactors, mechanical changes), and the ones that need the person's judgment last, so the rest can land while they think.
-- To change a layer (approved or not: an approved one is approved again), call smudgenix_revise with it, change the files, then smudgenix_commit: it goes into that layer, and the ones above restack on it.
-- Don't run git commit, git push, git rebase or jj commands that change history: they're refused here. Never push: what's approved is published for you. smudgenix_stack shows the stack; git diff and git log work.
-EOF
-    echo; NO_COLOR=1 stack_show "$2" 2>/dev/null || true
-  fi
-}
-
-# --- stacks: a thread's work, as layers ----------------------------------------
-
-# A thread in a repository works in its own jj workspace (a git worktree too),
-# in smudgenix's store, off your trunk: its work, a stack of layers (one jj
-# change each, each safe to land), that you review from the bottom, and that
-# go to your forge as you approve them (see publishing, below). Your checkout
-# stays yours, and git's: jj's repository is in the store, backed by your
-# repository's git.
-#
-# Agents' commands can't change history (their sandbox has the store and your
-# repository's git read-only); smudgenix's OpenCode plugin commits, revises and
-# shows layers for them (stack commit|revise|show), so its rules are kept.
-stacks_dir="$store_dir/stacks"
-threads_dir="$store_dir/threads"
-
-# jj, quiet, as you (your repository's git identity), never paging; with only
-# your trunk and tags immutable (a published layer's still the thread's to
-# revise: you approve it again).
-jjr() {
-  "$jj" --no-pager --color=never --quiet --config 'revset-aliases."immutable_heads()"="present(trunk()) | tags()"' \
-    --config "user.name=$(git -C "$repo" config user.name 2>/dev/null || echo smx)" \
-    --config "user.email=$(git -C "$repo" config user.email 2>/dev/null || echo smx@localhost)" "$@"
-}
-
-# A repository's trunk: its remote's default branch, else main or master, else
-# the branch it's on.
-trunk_of() {
-  local head
-  if head=$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null); then echo "${head#origin/}"; return; fi
-  for head in main master; do
-    git -C "$1" show-ref --verify --quiet "refs/heads/$head" && { echo "$head"; return; }
-  done
-  git -C "$1" branch --show-current
-}
-
-# A thread's layers, as a revset: what's on top of your trunk (yours, or its
-# remote's), from wherever in the stack its working copy is.
-stack_revset() {
-  local trunk remote
-  trunk=$(jq -r .trunk <<<"$1")
-  remote=$(remote_of "$(jq -r .repo <<<"$1")" "$trunk")
-  echo "(::@ ~ ::(present(\"$trunk\")${remote:+ | present(\"$trunk\"@\"$remote\")}))::"
-}
-
-thread_file() { echo "$threads_dir/$1.json"; }
-thread_json() {
-  [ -f "$(thread_file "$1")" ] || die "$1 has no stack (only threads started in a repository with smx ai new do)" 4
-  cat "$(thread_file "$1")"
-}
-save_thread() {
-  mkdir -p "$threads_dir"
-  jq . <<<"$2" >"$(thread_file "$1").new" && mv "$(thread_file "$1").new" "$(thread_file "$1")"
-}
-
-# A workspace for a new thread in a repository, off its trunk (its jj
-# repository made first, if it's the first): prints {jj, workspace, trunk}.
-stack_create() {
-  local repo=$1 common key jjrepo trunk name ws
-  common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
-  key="$(basename "$repo")-$(printf '%s' "$repo" | sha256sum | cut -c1-8)"
-  jjrepo="$stacks_dir/$key/repo"
-  if [ ! -d "$jjrepo/.jj" ]; then
-    mkdir -p "$stacks_dir/$key"
-    jjr git init --git-repo "$common" "$jjrepo" >/dev/null 2>&1 || die "couldn't make a jj repository for $repo"
-  fi
-  trunk=$(trunk_of "$repo")
-  [ -n "$trunk" ] || die "$repo has no branch to work from"
-  jjr -R "$jjrepo" git import >/dev/null 2>&1 || true
-  name="t$(date +%Y%m%d%H%M%S)$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
-  ws="$stacks_dir/$key/$name"
-  jjr -R "$jjrepo" workspace add --colocate --name "$name" -r "$(git -C "$repo" rev-parse "refs/heads/$trunk")" "$ws" >/dev/null 2>&1 \
-    || die "couldn't make a workspace for the thread in $stacks_dir/$key"
-  jq -cn --arg j "$jjrepo" --arg w "$ws" --arg t "$trunk" --arg n "$name" '{jj: $j, workspace: $w, trunk: $t, name: $n}'
-}
-
-# A thread's stack: its layers, bottom first, and what's not committed yet.
-stack_view() {
-  local thread repo ws trunk layers patches
-  thread=$(thread_json "$1")
-  repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") trunk=$(jq -r .trunk <<<"$thread")
-  [ -d "$ws" ] || die "its workspace is gone ($ws)" 4
-  jjr -R "$ws" git import --ignore-working-copy >/dev/null 2>&1 || true
-  # shellcheck disable=SC2016 # (jj's template)
-  layers=$(jjr -R "$ws" log --ignore-working-copy --no-graph --reversed -r "$(stack_revset "$thread")" \
-    -T '"{\"c\":" ++ json(self) ++ ",\"empty\":" ++ json(empty) ++ ",\"conflict\":" ++ json(conflict) ++ ",\"wc\":" ++ json(current_working_copy) ++ "}\n"' 2>/dev/null) \
-    || die "couldn't read the stack in $ws"
-  # (Approved and restacked since, with what they change the same: still approved.)
-  patches=$(jq -r --argjson t "$thread" '.c | select($t.published[.change_id] and $t.published[.change_id].commit != .commit_id) | .commit_id' <<<"$layers" \
-    | while read -r commit; do jq -cn --arg c "$commit" --arg p "$(patch_of "$repo" "$commit")" '{($c): $p}'; done | jq -cs 'add // {}')
-  jq -cs --argjson thread "$thread" --argjson patches "$patches" --arg repo "$repo" --arg dirty "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" '
-    map({change: .c.change_id, commit: .c.commit_id, title: (.c.description | split("\n")[0]),
-         empty, conflict, working: .wc})
-    | (map(select(.working | not)) | to_entries | map(.value + {layer: (.key + 1)})) as $layers
-    | (map(select(.working)) | first) as $wc
-    | {v: 1, session: $thread.session, project: $thread.project, repo: $repo, trunk: $thread.trunk,
-       workspace: $thread.workspace, revising: ($thread.revising // null),
-       layers: [$layers[] | ($thread.published[.change] // null) as $p
-         | . + {state: (if $p == null then "to review"
-                        elif $p.commit == .commit or ($p.patch != null and $p.patch == $patches[.commit]) then "approved"
-                        else "changed" end),
-                pushed: ($p != null and $p.pushed == .commit),
-                published: (if $p then $p | {branch, pr} else null end)}],
-       merged: (($thread.merged // []) | length), forge: ($thread.forge // null),
-       uncommitted: ($dirty != "")}' <<<"$layers"
-}
-
-
-# A layer's files and hotspots (see ./hotspots.jq), from its commit (which
-# never changes, so they're kept).
-layer_stats() {
-  local repo=$1 commit=$2 cache="$stacks_dir/.layers/$2.json" change
-  if [ ! -s "$cache" ]; then
-    mkdir -p "$stacks_dir/.layers"
-    change=$(change_json "$repo" "$commit^" "$commit") || return 1
-    jq -c --slurpfile spots <(jq -c -f "$hotspots_filter" <<<"$change") \
-      '{files: [.files[] | {status, path, added, removed}], hotspots: $spots[0]}' <<<"$change" >"$cache.new" && mv "$cache.new" "$cache"
-  fi
-  cat "$cache"
-}
-
-# Every open thread's stack, its layers with their files and hotspots: what
-# watch publishes.
-stacks_json() {
-  local file session view repo stats command layer_commit tree check
-  for file in "$threads_dir"/*.json; do
-    [ -f "$file" ] || continue
-    session=$(basename "$file" .json)
-    [ "$(jq -r '.closed // empty' "$file")" = "" ] || continue
-    view=$(stack_view "$session" 2>/dev/null) || continue
-    repo=$(jq -r .repo <<<"$view")
-    command=$(check_command_of "$(jq -r .project <<<"$view")" "$(jq -r .workspace <<<"$view")" 2>/dev/null) || command=""
-    stats=$(jq -r '.layers[].commit' <<<"$view" | while read -r layer_commit; do
-      check=""
-      tree=$(git -C "$repo" rev-parse "$layer_commit^{tree}")
-      [ -z "$command" ] || check=$(check_result "$tree" "$command")
-      layer_stats "$repo" "$layer_commit" | jq -c --arg c "$layer_commit" --arg t "$tree" --arg k "$check" --arg cmd "$command" \
-        '{($c): (. + {tree: $t, checkable: ($cmd != ""), check: (if $k == "" then null else ($k | fromjson | {state, command, exit, log, started, finished}) end)})}'
-    done | jq -cs 'add // {}')
-    jq -c --argjson stats "$stats" '.layers |= map(. + ($stats[.commit] // {files: [], hotspots: [], check: null, checkable: false})
-      | . + {added: ([.files[].added] | add // 0), removed: ([.files[].removed] | add // 0)})' <<<"$view"
-  done | jq -cs '.'
-}
-
-# A layer's diff (git's format), by its number or change id.
-layer_of() {
-  jq -c --arg l "$2" '.layers[] | select((.layer | tostring) == $l or (.change | startswith($l)))' <<<"$1" | head -1
-}
-
-# stack: a thread's layers (or, with a verb, what smudgenix's OpenCode plugin
-# does for its agent: commit, revise, show).
-stack_command() {
-  local verb=${1:-}
-  case "$verb" in
-    commit) shift; stack_commit "$@" ;;
-    revise) shift; stack_revise "$@" ;;
-    diff) shift; stack_diff "$@" ;;
-    "" | -*) die "usage: smx ai stack <session> [--json] | stack diff <session> <layer>" ;;
-    *) stack_show "$@" ;;
-  esac
-}
-
-stack_show() {
-  local session=$1 json="" view
-  [ "${2:-}" != --json ] || json=1
-  view=$(stack_view "$session")
-  if [ -n "$json" ]; then echo "$view"; return; fi
-  # (Each layer's check, as it stands: its result, and its log.)
-  local command repo_dir checks layer_commit
-  repo_dir=$(jq -r .repo <<<"$view")
-  command=$(check_command_of "$(jq -r .project <<<"$view")" "$(jq -r .workspace <<<"$view")" 2>/dev/null) || command=""
-  checks=$(jq -r '.layers[].commit' <<<"$view" | while read -r layer_commit; do
-    [ -n "$command" ] || continue
-    jq -cn --arg c "$layer_commit" --arg k "$(check_result "$(git -C "$repo_dir" rev-parse "$layer_commit^{tree}")" "$command")" \
-      'if $k == "" then empty else {($c): ($k | fromjson)} end'
-  done | jq -cs 'add // {}')
-  view=$(jq -c --argjson k "$checks" '.layers |= map(. + {check: $k[.commit]})' <<<"$view")
-  jq -r --arg D "$D" --arg N "$N" --arg G "$G" --arg Y "$Y" --arg R "$R" '
-    "\($D)on \(.trunk), in \(.workspace)\($N)",
-    (if .layers == [] then "\($D)No layers yet.\($N)" else empty end),
-    (.layers[] | "  \(.layer). \(.title | if . == "" then "(no purpose given)" else . end)"
-      + (if .state == "approved" then "  \($G)approved\($N)" + (if .published.pr.url then " \($D)\(.published.pr.url)\($N)" elif .published.branch then " \($D)\(.published.branch)\($N)" else "" end)
-           + (if .published.branch and (.pushed | not) then " \($Y)(restacked: smx ai sync publishes it)\($N)" else "" end)
-         elif .state == "changed" then "  \($Y)changed since you approved it\($N)" else "" end)
-      + (if .conflict then "  \($R)conflicted\($N)" else "" end)
-      + (if .empty then "  \($Y)empty\($N)" else "" end)
-      + (if .check.state == "passed" then "  \($G)✓ check\($N)" elif .check.state == "failed" then "  \($R)✗ check\($N) \($D)\(.check.log)\($N)"
-         elif .check.state == "running" then "  \($D)checking…\($N)" else "" end)
-      + "  \($D)\(.change[0:8])\($N)"),
-    (if .revising then "\($Y)Revising layer \(.revising[0:8]).\($N)" else empty end),
-    (if .uncommitted then "\($D)And changes not committed yet.\($N)" else empty end),
-    (if .merged > 0 then "\($D)\(.merged) layer(s) merged already.\($N)" else empty end)' <<<"$view"
-}
-
-stack_diff() {
-  local session=${1:-} which=${2:-} view layer thread
-  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai stack diff <session> <layer>"
-  view=$(stack_view "$session")
-  layer=$(layer_of "$view" "$which")
-  [ -n "$layer" ] || die "no layer $which" 4
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread")
-  jjr -R "$(jq -r .workspace <<<"$thread")" diff --git --ignore-working-copy -r "$(jq -r .change <<<"$layer")"
-}
-
-# (A purpose is a commit's title: one line, short, and nobody's attribution.)
-purpose_ok() {
-  one_line "the purpose" "$1"
-  [ "${#1}" -le 72 ] || die "the purpose is ${#1} characters: say it in 72 or fewer, as a commit title"
-  ! grep -qiE 'co-authored-by|generated (with|by)|signed-off-by' <<<"$1" || die "no attribution in a purpose: say what the layer is for"
-}
-
-# commit: what the agent's changed, as a new layer on top, with its purpose;
-# or, revising a layer, into it (the layers above restack on it).
-stack_commit() {
-  local session="" purpose="" thread repo ws target top view
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --session) session=${2:-}; shift ;;
-      *) [ -z "$purpose" ] || die "usage: smx ai stack commit --session <session> \"<purpose>\""; purpose=$1 ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] || die "usage: smx ai stack commit --session <session> \"<purpose>\""
-  thread=$(thread_json "$session")
-  repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") target=$(jq -r '.revising // empty' <<<"$thread")
-  [ -n "$(jjr -R "$ws" diff --summary -r @)" ] || die "nothing's changed since the last layer: nothing to commit"
-  if [ -n "$target" ]; then
-    # (Into the layer being revised; then back to the top.)
-    if [ -n "$purpose" ]; then purpose_ok "$purpose"; jjr -R "$ws" squash --from @ --into "$target" -m "$purpose" >/dev/null
-    else jjr -R "$ws" squash --from @ --into "$target" -u >/dev/null; fi
-    top=$(jjr -R "$ws" log --no-graph -r "heads((::$target | $target::) & $(stack_revset "$thread")) ~ @" -T 'change_id ++ "\n"' | head -1)
-    jjr -R "$ws" new "${top:-$target}" >/dev/null
-    save_thread "$session" "$(jq -c 'del(.revising)' <<<"$thread")"
-  else
-    purpose_ok "$purpose"
-    # (No further ahead of you than the project's lead.)
-    local waiting lead
-    waiting=$(stack_view "$session" | jq '[.layers[] | select(.state != "approved")] | length')
-    lead=$(lead_of "$(jq -r .project <<<"$thread")")
-    [ "$waiting" -lt "$lead" ] || die "$waiting layers already wait for the person's approval (as many as this project lets you work ahead): don't commit more. Call smudgenix_pause with reason lead and end your turn; what you've changed stays, uncommitted."
-    jjr -R "$ws" commit -m "$purpose" >/dev/null
-  fi
-  view=$(stack_view "$session")
-  if [ -n "$target" ]; then
-    jq -c --arg t "$target" '{v: 1, revised: (.layers[] | select(.change == $t)), conflicted: [.layers[] | select(.conflict) | .layer], layers: (.layers | length)}' <<<"$view"
-  else
-    jq -c '{v: 1, committed: .layers[-1], layers: (.layers | length)}' <<<"$view"
-  fi
-}
-
-# revise: start changing a layer: what's committed next goes into it. (One
-# you've approved is yours to approve again, once it's changed.)
-stack_revise() {
-  local session="" which="" thread ws view layer
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --session) session=${2:-}; shift ;;
-      *) which=$1 ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai stack revise --session <session> <layer>"
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
-  view=$(stack_view "$session")
-  layer=$(layer_of "$view" "$which")
-  [ -n "$layer" ] || die "no layer $which" 4
-  [ "$(jq -r .uncommitted <<<"$view")" = false ] || die "commit (or undo) what's changed first: it'd go into layer $which"
-  jjr -R "$ws" new "$(jq -r .change <<<"$layer")" >/dev/null
-  save_thread "$session" "$(jq -c --arg c "$(jq -r .change <<<"$layer")" '.revising = $c' <<<"$thread")"
-  jq -c '{v: 1, revising: .}' <<<"$layer"
-}
-
-
-# --- checks: evidence, per layer -----------------------------------------------
-
-# A layer's check is the project's, run by smx ai (not the agent) on exactly
-# the layer's tree: in a fresh copy, in agents' sandbox (it's their code). Its
-# result is kept by tree and command, so it holds for the layer however it's
-# restacked, as long as what's in it is the same. watch runs them by itself,
-# one at a time, lowest first (what you'd approve next); v runs one now.
-checks_dir="$stacks_dir/.checks"
-
-# A project's check, as its files suggest: a fresh copy has no dependencies
-# installed, so those that need them install them first.
-guess_check() {
-  local dir=$1
-  if [ -f "$dir/flake.nix" ]; then
-    echo "nix flake check"
-  elif [ -f "$dir/package.json" ] && jq -e '.scripts.test // empty' "$dir/package.json" >/dev/null 2>&1; then
-    if [ -f "$dir/pnpm-lock.yaml" ]; then echo "pnpm install --frozen-lockfile && pnpm test"
-    elif [ -f "$dir/yarn.lock" ]; then echo "yarn install --frozen-lockfile && yarn test"
-    elif [ -f "$dir/bun.lock" ] || [ -f "$dir/bun.lockb" ]; then echo "bun install --frozen-lockfile && bun run test"
-    elif [ -f "$dir/package-lock.json" ]; then echo "npm ci && npm test"
-    else echo "npm install && npm test"
-    fi
-  elif [ -f "$dir/Cargo.toml" ]; then
-    echo "cargo test"
-  elif [ -f "$dir/go.mod" ]; then
-    echo "go test ./..."
-  elif [ -f "$dir/Makefile" ] && grep -qE '^check:' "$dir/Makefile"; then
-    echo "make check"
-  elif [ -f "$dir/Makefile" ] && grep -qE '^test:' "$dir/Makefile"; then
-    echo "make test"
-  elif [ -f "$dir/pyproject.toml" ] || [ -f "$dir/pytest.ini" ]; then
-    echo "python -m pytest"
-  else
-    return 1
-  fi
-}
-
-# A project's check: the one you last gave it, else what its files suggest
-# (from a folder of it).
-check_command_of() {
-  if [ -s "$store_dir/checks/$1" ]; then cat "$store_dir/checks/$1"; else guess_check "$2"; fi
-}
-
-check_file() {
-  echo "$checks_dir/$1-$(printf '%s' "$2" | sha256sum | cut -c1-8).json"
-}
-
-# A check's result, as stacks show it: {state: passed|failed|running|
-# interrupted, command, exit, log, started, finished}, or nothing.
-check_result() {
-  local file result
-  file=$(check_file "$1" "$2")
-  [ -s "$file" ] || return 0
-  result=$(cat "$file")
-  if [ "$(jq -r '.exit // empty' <<<"$result")" != "" ]; then
-    jq -c '. + {state: (if .exit == 0 then "passed" else "failed" end)}' <<<"$result"
-  elif [ -e "/proc/$(jq -r .pid <<<"$result")" ]; then
-    jq -c '. + {state: "running"}' <<<"$result"
-  else
-    jq -c '. + {state: "interrupted"}' <<<"$result"
-  fi
-}
-
-# check: runs a layer's check (by default the top one's), and records it;
-# --command sets the project's (remembered). With --auto (watch's), only if it
-# hasn't been run on that tree yet.
-check_command() {
-  local session="" which="" command="" auto="" json="" thread repo ws view layer commit tree project file work log status started
-  local usage="usage: smx ai check <session> [<layer>] [--command \"<check>\"] [--json]"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --command) command=${2:-}; shift; [ -n "$command" ] || die "$usage" ;;
-      --auto) auto=1 ;;
-      --json) json=1 ;;
-      -*) die "$usage" ;;
-      *) if [ -z "$session" ]; then session=$1; elif [ -z "$which" ]; then which=$1; else die "$usage"; fi ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] || die "$usage"
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread") project=$(jq -r .project <<<"$thread")
-  view=$(stack_view "$session")
-  [ "$(jq '.layers | length' <<<"$view")" -gt 0 ] || die "it has no layers to check"
-  layer=$(layer_of "$view" "${which:-$(jq '.layers | length' <<<"$view")}")
-  [ -n "$layer" ] || die "no layer $which" 4
-  commit=$(jq -r .commit <<<"$layer") tree=$(git -C "$repo" rev-parse "$commit^{tree}")
-  if [ -n "$command" ]; then
-    mkdir -p "$store_dir/checks"
-    printf '%s\n' "$command" >"$store_dir/checks/$project"
-  elif ! command=$(check_command_of "$project" "$ws"); then
-    die "no check found for $project: give it one (it's remembered) with smx ai check $session --command \"<check>\""
-  fi
-  file=$(check_file "$tree" "$command")
-  mkdir -p "$checks_dir"
-  # (watch's: not again, unless it was interrupted.)
-  if [ -n "$auto" ] && [ -s "$file" ] && [ "$(check_result "$tree" "$command" | jq -r .state)" != interrupted ]; then return 0; fi
-
-  # (A copy that shares the repository's objects, read-only, and has its own
-  # everything else: nothing the check does reaches the repository.)
-  work=$(mktemp -d "${TMPDIR:-/tmp}/smx-ai-check.XXXXXX")
-  trap 'rm -rf "${work:-}"' EXIT
-  trap 'exit 130' INT TERM
-  if ! git clone -q --shared --no-checkout "$repo" "$work/copy" 2>/dev/null \
-    || ! git -C "$work/copy" -c advice.detachedHead=false checkout -q --detach "$commit" 2>/dev/null; then
-    die "couldn't check out layer $(jq -r .layer <<<"$layer") ($commit) from $repo"
-  fi
-  started=$(now_ms) log="$checks_dir/$tree-$started.log"
-  jq -cn --arg t "$tree" --arg c "$command" --arg m "$commit" --argjson s "$started" --argjson p "$BASHPID" --arg l "$log" \
-    '{tree: $t, command: $c, commit: $m, started: $s, pid: $p, log: $l, exit: null}' >"$file"
-  [ -n "$json" ] || [ -n "$auto" ] || echo "${D}Checking layer $(jq -r .layer <<<"$layer") (${commit:0:12}), a fresh copy, sandboxed:${N} $command"
-  run_check() (
-    cd "$work/copy" || exit 1
-    if [ -n "$sandbox" ]; then SMX_AI_SHELL=bash exec "$sandbox" -c "$command"; else exec bash -c "$command"; fi
-  )
-  status=0
-  if [ -z "$json" ] && [ -z "$auto" ] && [ -t 1 ]; then
-    run_check 2>&1 </dev/null | tee "$log" || status=${PIPESTATUS[0]}
-  else
-    run_check >"$log" 2>&1 </dev/null || status=$?
-  fi
-  rm -rf "$work"
-  trap - EXIT INT TERM
-  jq -c --argjson x "$status" --argjson f "$(now_ms)" '. + {exit: $x, finished: $f} | del(.pid)' "$file" >"$file.new" && mv "$file.new" "$file"
-  if [ -n "$json" ]; then jq -c '{v: 1} + .' "$file"; return; fi
-  [ -n "$auto" ] && return 0
-  local took=$((($(now_ms) - started) / 1000))
-  took=$([ "$took" -ge 60 ] && echo "$((took / 60))m $((took % 60))s" || echo "${took}s")
-  [ "$status" -eq 0 ] || die "the check failed (exit $status, after $took): $command; its log: $log"
-  echo "${G}✓${N} Passed: $command ${D}($took; its log: $log)${N}"
-}
-
-# watch's: the next layer without a result, if no check's running: open
-# stacks', lowest first, those to review before those approved.
-auto_check() {
-  local next
-  mkdir -p "$checks_dir"
-  (
-    flock -n 9 || exit 0
-    next=$(jq -r '[.[] | .session as $s | .layers[] | select((.check == null or .check.state == "interrupted") and .checkable)
-      | {s: $s, layer, approved: (.state == "approved")}] | sort_by(.approved, .layer) | first // empty | "\(.s) \(.layer)"' <<<"$1")
-    [ -n "$next" ] || exit 0
-    # shellcheck disable=SC2086 # (session and layer)
-    check_command $next --auto >/dev/null 2>&1 || true
-  ) 9>"$checks_dir/.auto.lock"
-}
-
-# --- publishing: what you approve goes to your forge, never your trunk ---------
-
-# Approving a layer publishes it, and every layer below it: each to a branch of
-# its own on your repository's remote, and a pull (or merge) request each,
-# chained bottom first (on GitHub, linked as a stack too, where it can be).
-# Your trunk is the forge's: its own process merges them, as it would anyone's.
-# Nothing but what you approved is pushed, and agents never push.
-
-# A repository's remote: its trunk's, else origin, else its only one (none:
-# nothing to publish to).
-remote_of() {
-  local remote
-  remote=$(git -C "$1" config --get "branch.$2.remote" 2>/dev/null) && [ "$remote" != . ] && { echo "$remote"; return; }
-  git -C "$1" remote get-url origin >/dev/null 2>&1 && { echo origin; return; }
-  if [ "$(git -C "$1" remote | wc -l)" -eq 1 ]; then git -C "$1" remote; fi
-}
-
-# Where a remote is (as configured, not as rewritten for pushing): its forge,
-# host and owner/name, as "<forge> <host> <owner/name>", if it's one smx ai
-# knows and its CLI is here; else "none".
-forge_of() {
-  local url host path
-  url=$(git -C "$1" config --get "remote.$2.url" 2>/dev/null) || { echo none; return; }
-  url=${url#*://} url=${url#*@}
-  case "$url" in
-    *:*/*) host=${url%%:*} path=${url#*:} ;;
-    */*) host=${url%%/*} path=${url#*/} ;;
-    *) echo none; return ;;
-  esac
-  host=${host%%:*} path=${path%.git} path=${path%/}
-  case "$host" in
-    github.com | *github*) command -v gh >/dev/null && { echo "github $host $path"; return; } ;;
-    gitlab.com | *gitlab*) command -v glab >/dev/null && { echo "gitlab $host $path"; return; } ;;
-    codeberg.org | *gitea* | *forgejo*) command -v tea >/dev/null && { echo "gitea $host $path"; return; } ;;
-  esac
-  echo none
-}
-
-# (A branch's name, from a layer's purpose: smx/<words>-<its change>.)
-branch_for() {
-  local slug
-  slug=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-*//; s/-*$//' | cut -c1-40 | sed 's/-*$//')
-  echo "smx/${slug:-layer}-${2:0:8}"
-}
-
-# (What a commit changes, as git identifies a patch: the same after a restack.)
-patch_of() {
-  local cache="$stacks_dir/.layers/$2.patch"
-  if [ ! -s "$cache" ]; then
-    mkdir -p "$stacks_dir/.layers"
-    git -C "$1" show --no-color "$2" | git patch-id --stable | cut -d' ' -f1 >"$cache.new" && mv "$cache.new" "$cache"
-  fi
-  cat "$cache"
-}
-
-# The stack onto your trunk as the remote has it now (fetched): layers it's
-# merged since (squashed or not) drop out, as merged. If that conflicts,
-# nothing changes. Prints the thread, updated.
-restack_onto_remote() {
-  local session=$1 thread=$2 remote=$3 trunk ws op view gone
-  trunk=$(jq -r .trunk <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
-  git -C "$repo" fetch -q "$remote" "+refs/heads/$trunk:refs/remotes/$remote/$trunk" 2>/dev/null \
-    || die "couldn't fetch $trunk from $remote"
-  jjr -R "$ws" git import >/dev/null 2>&1 || true
-  # (A stack on commits of your trunk the remote doesn't have yet: they'd be
-  # left out from under it. They're yours to push, or the forge's to merge.)
-  local unpushed
-  unpushed=$(jjr -R "$ws" log --ignore-working-copy --no-graph -r "::(roots($(stack_revset "$thread"))-) ~ ::\"$trunk\"@\"$remote\"" -T '"x\n"' | wc -l)
-  [ "$unpushed" -eq 0 ] \
-    || die "the stack builds on $unpushed commit(s) of your $trunk that $remote doesn't have: push them (or have them merged) first"
-  op=$(jjr -R "$ws" op log -n1 --no-graph -T 'id')
-  jjr -R "$ws" rebase -s "roots($(stack_revset "$thread"))" -d "\"$trunk\"@\"$remote\"" --skip-emptied >/dev/null 2>&1 \
-    || die "couldn't rebase the stack onto $remote's $trunk"
-  view=$(stack_view "$session")
-  if [ "$(jq '[.layers[] | select(.conflict)] | length' <<<"$view")" -gt 0 ]; then
-    jjr -R "$ws" op restore "$op" >/dev/null 2>&1 || true
-    die "$remote's $trunk has moved on, and the stack conflicts with it: have the agent rebase it (r on its bottom layer)"
-  fi
-  # (Published layers no longer in the stack: merged.)
-  gone=$(jq -c --argjson v "$view" '[.published // {} | to_entries[] | select(.key | IN($v.layers[].change) | not)]' <<<"$thread")
-  jq -c --argjson gone "$gone" --argjson t "$(now_ms)" \
-    '.merged = ((.merged // []) + [$gone[] | .value + {change: .key, at: $t}]) | .published = ((.published // {}) | with_entries(select(.key | IN($gone[].key) | not)))' <<<"$thread"
-}
-
-# Layers (JSON lines, bottom first) to their branches on the remote, at once
-# (and only over what was pushed there last), then to their requests, each on
-# the one below. Prints the thread, updated.
-publish_layers() {
-  local thread=$1 remote=$2 layers=$3 trunk forge host slug pushes=() leases=() layer branch prev base pr number url
-  trunk=$(jq -r .trunk <<<"$thread")
-  while IFS= read -r layer; do
-    branch=$(jq -r --arg c "$(jq -r .change <<<"$layer")" '.published[$c].branch // empty' <<<"$thread")
-    [ -n "$branch" ] || branch=$(branch_for "$(jq -r .title <<<"$layer")" "$(jq -r .change <<<"$layer")")
-    prev=$(jq -r --arg c "$(jq -r .change <<<"$layer")" '.published[$c].pushed // empty' <<<"$thread")
-    pushes+=("$(jq -r .commit <<<"$layer"):refs/heads/$branch")
-    leases+=("--force-with-lease=refs/heads/$branch:$prev")
-    thread=$(jq -c --argjson l "$layer" --arg b "$branch" --arg p "$(patch_of "$repo" "$(jq -r .commit <<<"$layer")")" --argjson t "$(now_ms)" \
-      '.published[$l.change] = ((.published[$l.change] // {}) + {branch: $b, title: $l.title, commit: $l.commit, patch: $p, at: $t})' <<<"$thread")
-  done <<<"$layers"
-  git -C "$repo" push -q --atomic --no-verify "${leases[@]}" "$remote" "${pushes[@]}" 2>"$stacks_dir/.push.err" \
-    || die "couldn't push to $remote: $(tail -3 "$stacks_dir/.push.err" | tr '\n' ' ')(nothing was pushed)"
-  thread=$(jq -c '.published |= map_values(.pushed = .commit)' <<<"$thread")
-
-  read -r forge host slug <<<"$(forge_of "$repo" "$remote")"
-  base=$trunk
-  local numbers=()
-  while IFS= read -r layer; do
-    pr=$(jq -c --arg c "$(jq -r .change <<<"$layer")" '.published[$c]' <<<"$thread")
-    branch=$(jq -r .branch <<<"$pr") number=$(jq -r '.pr.number // empty' <<<"$pr") url=""
-    case "$forge" in
-      github)
-        if [ -n "$number" ]; then
-          gh pr edit "$number" -R "$host/$slug" --base "$base" >/dev/null 2>&1 || say "couldn't set #$number's base to $base"
-        elif url=$(gh pr create -R "$host/$slug" --base "$base" --head "$branch" --title "$(jq -r .title <<<"$pr")" --body "" 2>"$stacks_dir/.push.err" | tail -1); then
-          number=${url##*/}
-        else
-          say "couldn't open a pull request for $branch: $(tail -1 "$stacks_dir/.push.err")"
-        fi
-        ;;
-      gitlab)
-        if [ -n "$number" ]; then
-          glab mr update "$number" -R "$host/$slug" --target-branch "$base" >/dev/null 2>&1 || say "couldn't set !$number's target to $base"
-        elif url=$(glab mr create -R "$host/$slug" --source-branch "$branch" --target-branch "$base" --title "$(jq -r .title <<<"$pr")" \
-          --description "" --yes --no-editor 2>"$stacks_dir/.push.err" | grep -o 'https://[^ ]*' | tail -1) && [ -n "$url" ]; then
-          number=${url##*/}
-        else
-          say "couldn't open a merge request for $branch: $(tail -1 "$stacks_dir/.push.err")"
-        fi
-        ;;
-      gitea)
-        if [ -z "$number" ]; then
-          if url=$(tea pr create --repo "$slug" --head "$branch" --base "$base" --title "$(jq -r .title <<<"$pr")" --description "" 2>"$stacks_dir/.push.err" \
-            | grep -o 'https://[^ ]*' | tail -1) && [ -n "$url" ]; then
-            number=${url##*/}
-          else
-            say "couldn't open a pull request for $branch: $(tail -1 "$stacks_dir/.push.err")"
-          fi
-        fi
-        ;;
-    esac
-    if [ -n "$number" ]; then
-      numbers+=("$number")
-      thread=$(jq -c --arg c "$(jq -r .change <<<"$layer")" --arg n "$number" --arg u "$url" \
-        '.published[$c].pr = {number: ($n | tonumber? // $n), url: (if $u != "" then $u else .published[$c].pr.url end)}' <<<"$thread")
-    fi
-    base=$branch
-  done <<<"$layers"
-  rm -f "$stacks_dir/.push.err"
-  # (On GitHub, a stack of them too, where the repository has stacks.)
-  if [ "$forge" = github ] && [ "${#numbers[@]}" -gt 1 ] && gh stack --help >/dev/null 2>&1; then
-    (cd "$repo" && gh stack link --remote "$remote" --base "$trunk" "${numbers[@]}" >/dev/null 2>&1) || true
-  fi
-  jq -c --arg f "$forge" '.forge = $f' <<<"$thread"
-}
-
-# The layers to publish: up to one (by its number), bottom first.
-layers_upto() {
-  jq -c --argjson n "$2" '.layers[] | select(.layer <= $n)' <<<"$1"
-}
-
-# approve: a layer, and every layer below it, published for the forge to
-# review and merge: never on your trunk. Not while one's conflicted, or holds
-# an agent's call that's still provisional (approving never decides for you).
-approve_command() {
-  local session="" which="" anyway="" thread ws remote view layer n change unsettled failed
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --anyway) anyway=1 ;;
-      -*) die "usage: smx ai approve <session> <layer> [--anyway]" ;;
-      *) if [ -z "$session" ]; then session=$1; elif [ -z "$which" ]; then which=$1; else die "usage: smx ai approve <session> <layer> [--anyway]"; fi ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] && [ -n "$which" ] || die "usage: smx ai approve <session> <layer> [--anyway]"
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
-  view=$(stack_view "$session")
-  layer=$(layer_of "$view" "$which")
-  [ -n "$layer" ] || die "no layer $which" 4
-  change=$(jq -r .change <<<"$layer") n=$(jq -r .layer <<<"$layer")
-  [ "$(jq --argjson n "$n" '[.layers[] | select(.layer <= $n and .conflict)] | length' <<<"$view")" -eq 0 ] \
-    || die "a layer up to $n is conflicted: it can't be approved"
-  unsettled=$(fold | jq -r --argjson upto "$(jq -c --argjson n "$n" '[.layers[] | select(.layer <= $n) | .change]' <<<"$view")" \
-    '[.current[] | select(.provisional and .layer != null and (.layer | IN($upto[])))] | map("\(.id) \(.text)") | join("; ")')
-  [ -z "$unsettled" ] || die "these calls made in it are still provisional: $unsettled (confirm, replace or withdraw them first)"
-  # (A failed check is evidence against it: approving over one is yours to say.)
-  if [ -z "$anyway" ]; then
-    failed=$(stacks_json | jq -r --arg s "$session" --argjson n "$n" '.[] | select(.session == $s) | [.layers[] | select(.layer <= $n and .check.state == "failed") | .layer] | join(", ")')
-    [ -z "$failed" ] || die "the check failed on layer(s) $failed: approve with --anyway if that's fine"
-  fi
-
-  remote=$(remote_of "$repo" "$(jq -r .trunk <<<"$thread")")
-  if [ -z "$remote" ]; then
-    # (Nowhere to publish: approved here, for when there is.)
-    thread=$(jq -c --argjson v "$(layers_upto "$view" "$n" | jq -cs .)" --argjson t "$(now_ms)" \
-      'reduce $v[] as $l (.; .published[$l.change] = ((.published[$l.change] // {}) + {title: $l.title, commit: $l.commit, at: $t}))' <<<"$thread")
-    save_thread "$session" "$thread"
-    echo "${G}✓${N} Approved, up to: $(jq -r .title <<<"$layer") ${D}($repo has no remote to publish it to)${N}"
-    return
-  fi
-  thread=$(restack_onto_remote "$session" "$thread" "$remote")
-  save_thread "$session" "$thread"
-  view=$(stack_view "$session")
-  layer=$(layer_of "$view" "$change")
-  [ -n "$layer" ] || { echo "${D}It's merged on $remote already.${N}"; return; }
-  thread=$(publish_layers "$thread" "$remote" "$(layers_upto "$view" "$(jq -r .layer <<<"$layer")")")
-  save_thread "$session" "$thread"
-  jq -r --arg G "$G" --arg D "$D" --arg N "$N" --arg r "$remote" --argjson v "$(layers_upto "$view" "$(jq -r .layer <<<"$layer")" | jq -cs .)" '
-    "\($G)✓\($N) Approved, and published to \($r):",
-    (. as $t | $v[] | $t.published[.change] as $p
-      | "  \(.layer). \(.title)  \($D)\($p.branch)\(if $p.pr.url then "  " + $p.pr.url elif $p.pr then "  #\($p.pr.number)" else "" end)\($N)")' <<<"$thread"
-}
-
-# sync: the stack onto your trunk as the remote has it now (what it's merged
-# drops out), and what you approved that's restacked since, published again.
-sync_command() {
-  local session=${1:-} thread remote view approved
-  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai sync <session>"
-  thread=$(thread_json "$session") repo=$(jq -r .repo <<<"$thread")
-  remote=$(remote_of "$repo" "$(jq -r .trunk <<<"$thread")")
-  [ -n "$remote" ] || die "$repo has no remote to sync with"
-  local before
-  before=$(jq '.merged // [] | length' <<<"$thread")
-  thread=$(restack_onto_remote "$session" "$thread" "$remote")
-  save_thread "$session" "$thread"
-  view=$(stack_view "$session")
-  # (Approved from the bottom up, unchanged since: theirs to publish again.)
-  approved=$(jq -c 'first(.layers | to_entries[] | select(.value.state != "approved") | .key) // (.layers | length)' <<<"$view")
-  if [ "$approved" -gt 0 ] && [ "$(jq --argjson n "$approved" '[.layers[:$n][] | select(.pushed | not)] | length' <<<"$view")" -gt 0 ]; then
-    thread=$(publish_layers "$thread" "$remote" "$(layers_upto "$view" "$approved")")
-    save_thread "$session" "$thread"
-  fi
-  local merged
-  merged=$(($(jq '.merged // [] | length' <<<"$thread") - before))
-  echo "${G}✓${N} In step with $remote's $(jq -r .trunk <<<"$thread")${D}$([ "$merged" -eq 0 ] || echo ": $merged layer(s) merged since")${N}"
-}
-
-# --- pauses: why an agent stopped -----------------------------------------------
-
-# An agent ends each turn saying why, through smudgenix's OpenCode plugin: so
-# what comes back to you is sorted by what it needs from you, and how far
-# agents work ahead can be tuned from why they stop (they're all kept).
-pause_log="$store_dir/pauses.jsonl"
-pause_reasons="decision uncertain conflict failing lead appetite done"
-
-# pause: the reason (one of $pause_reasons) and a line on it.
-pause_command() {
-  local session="" thread="" reason="" note="" project layers=0
-  local usage="usage: smx ai pause --session <session> --thread <session> --reason <reason> \"<a line on it>\" (reasons: $pause_reasons)"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --session) session=${2:-}; shift ;;
-      --thread) thread=${2:-}; shift ;;
-      --reason) reason=${2:-}; shift ;;
-      -*) die "$usage" ;;
-      *) [ -z "$note" ] || die "$usage"; note=$1 ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] && [ -n "$thread" ] || die "$usage"
-  case " $pause_reasons " in *" $reason "*) ;; *) die "$usage" ;; esac
-  one_line "the line" "$note"
-  project=$(project_of "$PWD")
-  if [ -f "$(thread_file "$thread")" ]; then
-    layers=$(stack_view "$thread" 2>/dev/null | jq '[.layers[] | select(.state != "approved")] | length') || layers=0
-  fi
-  append_entry "$pause_log" p "$(jq -cn --arg s "$session" --arg t "$thread" --arg p "$project" --arg r "$reason" --arg n "$note" --argjson l "${layers:-0}" \
-    '{session: $s, thread: $t, project: $p, reason: $r, note: $n, unapproved: $l}')"
-}
-
-# Each thread's latest pause (of the last 500): what watch publishes.
-pauses_json() {
-  tail -n 500 "$pause_log" 2>/dev/null | jq -cs 'group_by(.thread) | map(max_by(.time))' || echo '[]'
-}
-
-# How many layers an agent may have waiting for you before it stops for you
-# (a pause, "lead"): the project's, else 3.
-lead_of() {
-  if [ -s "$store_dir/leads/$1" ]; then cat "$store_dir/leads/$1"; else echo 3; fi
-}
-
-# lead: how far agents may work ahead of you in a project (by default the
-# one you're in): layers not approved yet, at most.
-lead_command() {
-  local project="" n=""
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --project) project=${2:-}; shift ;;
-      *) [ -z "$n" ] || die "usage: smx ai lead [<layers>] [--project <name>]"; n=$1 ;;
-    esac
-    shift
-  done
-  if [ -z "$project" ]; then
-    git rev-parse --show-toplevel >/dev/null 2>&1 || die "you're not in a project: say which (--project <name>)"
-    project=$(project_of "$PWD")
-  fi
-  if [ -z "$n" ]; then echo "$(lead_of "$project") layers, in $project"; return; fi
-  [[ "$n" =~ ^[1-9][0-9]?$ ]] || die "the lead is a number of layers, from 1"
-  mkdir -p "$store_dir/leads"
-  echo "$n" >"$store_dir/leads/$project"
-  echo "${G}✓${N} Agents in $project work up to $n layers ahead of you."
 }
 
 # --- threads: new, close, context --------------------------------
@@ -1508,26 +696,12 @@ new_thread() {
   [ -d "$dir" ] || die "no folder $dir" 4
   dir=$(cd "$dir" && pwd)
   need_server
-  # (In a repository: in a workspace of its own, its work a stack of layers;
-  # never editing your checkout.)
-  local repo stack="" body
+  local body
   body=$(jq -cn --arg d "$dir" '{location: {directory: $d}}')
-  if repo=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null); then
-    stack=$(stack_create "$repo")
-    body=$(jq -cn --arg d "$(jq -r .workspace <<<"$stack")" --arg r "$repo" \
-      '{location: {directory: $d}, permissions: [{action: "edit", resource: ($r + "/**"), effect: "deny"}]}')
-  fi
   session=$(server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
     -d "$body" "$(server_url)/api/session" \
     | jq -r '.data.id // .id // empty') || true
   [ -n "$session" ] || die "couldn't start a session in $dir"
-  if [ -n "$stack" ]; then
-    save_thread "$session" "$(jq -c --arg s "$session" --arg r "$repo" --arg p "$(project_of "$repo")" --argjson t "$(now_ms)" \
-      '{v: 1, session: $s, repo: $r, project: $p, created: $t} + .' <<<"$stack")"
-    dir=$(jq -r .workspace <<<"$stack")
-    # (What you asked for, if it's a line, is where the thread's going.)
-    case "$prompt" in *$'\n'*) ;; *) [ "${#prompt}" -gt 200 ] || decide_command "$prompt" --kind direction --thread "$session" --project "$(project_of "$repo")" --json >/dev/null ;; esac
-  fi
   prompt_session "$session" "$prompt" || die "couldn't give session $session its prompt"
   if [ -n "$json" ]; then
     jq -cn --arg s "$session" --arg d "$dir" '{v: 1, session: $s, dir: $d}'
@@ -1537,48 +711,13 @@ new_thread() {
   [ -z "$tui" ] || open_session "$session"
 }
 
-# close: ends a thread (OpenCode archives its session). Work waiting for
-# review needs a decision first: --accept it, or --discard the review (the
-# changes stay as they are either way; nothing's undone).
+# close: ends a thread (OpenCode archives its session).
 close_thread() {
-  local session="" decision="" sess
-  local usage="usage: smx ai close <session> [--accept | --discard]"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --accept | --discard) decision=${1#--} ;;
-      -*) die "$usage" ;;
-      *) session=$1 ;;
-    esac
-    shift
-  done
-  [ -n "$session" ] || die "$usage"
+  local session=${1:-} sess
+  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai close <session>"
   need_server
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
-  # (A stack: its layers are approved (published), or set aside: still in jj's
-  # history, never reverted; its workspace goes.)
-  local thread n
-  if [ -f "$(thread_file "$session")" ] && [ "$(jq -r '.closed // empty' "$(thread_file "$session")")" = "" ]; then
-    thread=$(thread_json "$session")
-    n=$(stack_view "$session" 2>/dev/null | jq '.layers | length') || n=0
-    if [ "$n" -gt 0 ]; then
-      case "$decision" in
-        accept) approve_command "$session" "$n" >/dev/null ;;
-        discard) ;;
-        *) die "it has $n layer(s): close it with --accept (approve them all) or --discard (set them aside)" ;;
-      esac
-    fi
-    local repo ws
-    repo=$(jq -r .repo <<<"$thread") ws=$(jq -r .workspace <<<"$thread")
-    # (What it hadn't committed is kept too, as a change of its own.)
-    if [ -d "$ws" ] && [ -n "$(git -C "$ws" status --porcelain 2>/dev/null | head -1)" ]; then
-      jjr -R "$ws" describe -m "Not committed when its thread closed" >/dev/null 2>&1 || true
-    fi
-    jjr -R "$(jq -r .jj <<<"$thread")" workspace forget "$(jq -r .name <<<"$thread")" >/dev/null 2>&1 || true
-    git -C "$repo" worktree remove --force "$ws" >/dev/null 2>&1 || rm -rf "$ws"
-    git -C "$repo" worktree prune >/dev/null 2>&1 || true
-    save_thread "$session" "$(jq -c --argjson t "$(now_ms)" --arg d "${decision:-}" '.closed = $t | if $d != "" then .closing = $d else . end' <<<"$thread")"
-  fi
   if [ "$(jq -r '.time.archived // empty' <<<"$sess")" != "" ]; then
     echo "${D}Nothing to do: it's closed already.${N}"
     tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
@@ -1586,7 +725,7 @@ close_thread() {
   fi
   server_curl -sf --max-time 10 -X PATCH -H 'Content-Type: application/json' -d '{"archived": true}' \
     "$(server_url)/api/session/$session" >/dev/null || die "couldn't close session $session"
-  echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")${decision:+ (${decision}ed)}"
+  echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")"
   # (Its tmux session too, last: you may be in it.)
   tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
 }
@@ -1798,12 +937,6 @@ case "${1:-}" in
   confirm) shift; confirm_command "$@" ;;
   withdraw) shift; withdraw_command "$@" ;;
   log) shift; log_command "$@" ;;
-  stack) shift; stack_command "$@" ;;
-  approve) shift; approve_command "$@" ;;
-  sync) shift; sync_command "$@" ;;
-  check) shift; check_command "$@" ;;
-  pause) shift; pause_command "$@" ;;
-  lead) shift; lead_command "$@" ;;
   new) shift; new_thread "$@" ;;
   close) shift; close_thread "$@" ;;
   context) shift; context "$@" ;;

@@ -4,8 +4,7 @@
 # ($SMX_AI_SHELL) inside bubblewrap, where:
 #
 # - everything is read-only but the project (the repository the command runs
-#   in, and its main checkout's, for a worktree, but not a thread's stack's;
-#   else its directory), /tmp, and $writable (caches, under your home);
+#   in, and its main checkout's, for a worktree; else its directory), /tmp, and $writable (caches, under your home);
 # - $hidden (under your home: OpenCode's own files, so its password and
 #   saved permissions; keyrings, private keys, browsers' profiles) isn't
 #   there at all (of ~/.ssh, only public keys, known hosts and config are);
@@ -31,13 +30,11 @@ args=(
   --die-with-parent --bind /tmp /tmp
 )
 
-# The project. (In a thread's workspace, a stack's, only its files: history
-# is smx ai's to change, so your repository's git, and jj's, stay read-only.)
+# The project (and, for a worktree, its main checkout's git).
 top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || top=$cwd
 args+=(--bind "$top" "$top")
-stacks=${XDG_DATA_HOME:-$HOME/.local/share}/smudgenix/stacks
 if common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
-  && [ "${common#"$top"/}" = "$common" ] && [ "${top#"$stacks"/}" = "$top" ]; then
+  && [ "${common#"$top"/}" = "$common" ]; then
   args+=(--bind "$common" "$common")
 fi
 
