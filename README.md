@@ -103,8 +103,9 @@ or is at work, and you're only interrupted (a notification) when one needs
 you or fails. Mod+A (or a click on it) is a launcher: your active projects, those with
 tabs open in their OpenCode TUIs (and the one you're in first, even if it
 isn't: that's how one starts), each with its tabs' sessions, marked when an
-agent's at work or needs you. Closing a tab takes it off; a project whose
-tabs are all closed isn't shown. Enter on a project starts a session there; on
+agent's at work or needs you. Closing a tab takes it off (`x` does, there); a
+project whose tabs are all closed isn't shown, but Tab shows every recent
+project. Enter on a project starts a session there; on
 a session, opens it. Either way it's the project's own window (a tmux
 session, `smx-<project>-<hash>`), opened full width: its OpenCode TUI, on that
 session's tab (smudgenix's OpenCode plugin tells a running TUI which), and

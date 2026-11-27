@@ -3,7 +3,9 @@
 -- projects, those with tabs open in their OpenCode TUIs, each with those
 -- tabs' sessions, in order (and, rarely, one at work or needing you without
 -- a tab), marked when an agent's at work or needs you. The focused window's
--- project comes first, even if it's not active: that's how a project starts.
+-- project comes first, even if it's not active. Tab: every recent project
+-- too (to start a session in one that isn't active). x: close a session's
+-- tab (smx ai close --tab).
 -- Enter on a project starts a session there; on a session, opens it: either
 -- in the project's window, its OpenCode TUI (on that session's tab) and a
 -- shell side by side (smx ai new and open). That's all it does.
@@ -12,6 +14,7 @@ local open = false
 local selected = 1
 local rows = {} -- what Enter does on each: { project } | { session }
 local here = nil -- the focused window's project: { name, root }
+local all = false -- every recent project shown (Tab), not only the active
 local spin = 0 -- the loaders' angle
 local spinning = false -- (whether any's shown)
 
@@ -33,14 +36,19 @@ local function home(path)
   return path
 end
 
--- Runs smx ai, and says why if it couldn't.
-local function smx(argv)
+-- Runs smx ai, and says why if it couldn't (what: what it was doing).
+local function run(argv, what)
   noctalia.runAsync(argv, function(result)
     if result.exitCode ~= 0 then
       local said = (result.stderr or ""):gsub("^smx ai: ", ""):gsub("%s+$", "")
-      noctalia.notifyError("Couldn't open it", said ~= "" and said or `{table.concat(argv, " ")} exited {result.exitCode}`)
+      noctalia.notifyError(`Couldn't {what}`, said ~= "" and said or `{table.concat(argv, " ")} exited {result.exitCode}`)
     end
   end)
+end
+
+-- (Opening it: it's on screen next, so this closes.)
+local function smx(argv)
+  run(argv, "open it")
   panel.close()
 end
 
@@ -68,7 +76,8 @@ end
 
 -- The active projects (the focused window's first), most recently at work
 -- first, each with the sessions in its tabs, in order, then any top-level
--- one at work or needing you without a tab.
+-- one at work or needing you without a tab; then, with every one shown
+-- (Tab), the rest, most recent first, without their sessions.
 local function projects(agents)
   local list, byRoot, byId = {}, {}, {}
   for _, session in agents.sessions or {} do
@@ -98,6 +107,12 @@ local function projects(agents)
     if session.parent == nil and root and active(session) then add(project(root, session.project), session) end
   end
   table.sort(list, function(a, b) return a.latest > b.latest end)
+  if all then
+    for _, session in agents.sessions or {} do -- (newest first)
+      local root = session.root or session.dir
+      if session.parent == nil and root and not byRoot[root] then project(root, session.project) end
+    end
+  end
   if here then
     local p = byRoot[here.root]
     if p then table.remove(list, table.find(list, p)) else p = { name = here.name, root = here.root, sessions = {} } end
@@ -158,16 +173,18 @@ function render()
       })
     end
   end
-  if #rows == 0 then
-    table.insert(shown, ui.label({ text = "No projects open: open Mod+A from a terminal in one to start.", color = "on_surface/0.6" }))
+  if #rows == 0 and all then
+    table.insert(shown, ui.label({ text = "No projects yet: open Mod+A from a terminal in one.", color = "on_surface/0.6" }))
+  elseif #rows == 0 then
+    table.insert(shown, ui.label({ text = "No projects open: Tab shows every recent one.", color = "on_surface/0.6" }))
   end
   selected = math.clamp(selected, 1, math.max(1, #rows))
 
   panel.setNeedsFrameTick(spinning)
   panel.render(ui.column({ padding = 14, gap = 6 }, {
-    ui.label({ text = "Agents", fontSize = 15, fontWeight = "bold" }),
+    ui.label({ text = all and "Agents: every recent project" or "Agents", fontSize = 15, fontWeight = "bold" }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "row-" .. selected }, shown),
-    ui.label({ text = "Enter: a new session in a project, or open a session  ·  Esc close", fontSize = 11, color = "on_surface/0.5" }),
+    ui.label({ text = "Enter new session, or open  ·  x close tab  ·  Tab " .. (all and "active projects" or "every project") .. "  ·  Esc", fontSize = 11, color = "on_surface/0.5" }),
   }))
 end
 
@@ -188,6 +205,7 @@ end
 -- window's project is, once smx ai says which it is.)
 function onOpen(context)
   open = true
+  all = false
   selected = 1
   render()
   if type(context) == "string" and context ~= "" then
@@ -220,6 +238,13 @@ function onKey(chord, pressed)
     selected = math.max(selected - 1, 1)
   elseif chord == "Return" then
     if rows[selected] then activate(rows[selected]) end
+    return
+  elseif chord == "Tab" then
+    all = not all
+    selected = 1
+  elseif chord == "x" then
+    local entry = rows[selected]
+    if entry and entry.session then run({ "smx", "ai", "close", "--tab", entry.session.id }, "close its tab") end
     return
   end
   render()

@@ -31,7 +31,8 @@ Agents (OpenCode), as part of the desktop.
   new [--dir <folder>] ["<what to do>"]
                           Start a session in a folder (by default this one),
                           and open it (as open does)
-  close <session>         End it (OpenCode archives it), and close its tab
+  close <session> [--tab] End it (OpenCode archives it), and close its tab
+                          (--tab: only close its tab)
   context --json          Where you are: the focused window's project
 
   decide "<line>" [--why "<why>"] [--kind direction|constraint|decision|open]
@@ -402,31 +403,44 @@ tell_tuis() {
     "$(server_url)/api/rpc/smudgenix/$1?location%5Bdirectory%5D=$(jq -rn --arg r "$2" '$r | @uri')" >/dev/null
 }
 
-# A project, on screen: its tmux session (made the first time), its TUI on a
-# session's tab (or a new session: none given); its window, if it's on
-# screen, else a new terminal.
-open_project() {
-  local root=$1 session=${2:-} name tui="" window
+# A project's tmux session (made if it isn't there), with its TUI running
+# (started if it isn't, on a session if given one): sets the caller's $tui
+# (its pane) and $started (if it was just started).
+project_tui() {
+  local root=$1 session=${2:-} name
   local tui_command=("$opencode")
   [ -z "$session" ] || tui_command+=(-s "$session")
-  [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
   name=$(tmux_session_of "$root")
+  tui="" started=""
   if ! tmux has-session -t "=$name" 2>/dev/null; then
     tui=$(tmux new-session -d -P -F '#{pane_id}' -s "$name" -c "$root" -x 200 -y 50 "${tui_command[@]}") \
       || die "couldn't start tmux session $name"
     tmux set-option -t "=$name:" @smx_root "$root"
     tmux split-window -h -d -l 40% -t "$tui" -c "$root" || true
+    started=1
   else
     tui=$(tmux show-options -v -t "=$name:" @smx_tui 2>/dev/null) || tui=""
-    if [ -n "$tui" ] && tmux list-panes -s -t "=$name" -F '#{pane_id}' | grep -qxF -- "$tui"; then
-      tell_tuis open "$root" "$session" || die "couldn't reach $name's TUI (through OpenCode's server)"
-    else
+    if [ -z "$tui" ] || ! tmux list-panes -s -t "=$name" -F '#{pane_id}' | grep -qxF -- "$tui"; then
       # (Its TUI's gone: a new one, on the left.)
       tui=$(tmux split-window -h -b -P -F '#{pane_id}' -l 60% -t "=$name:" -c "$root" "${tui_command[@]}") \
         || die "couldn't start a TUI in $name"
+      started=1
     fi
   fi
   tmux set-option -t "=$name:" @smx_tui "$tui"
+}
+
+# A project, on screen: its TUI on a session's tab (or a new session: none
+# given), in its tmux session; its window, if it's on screen, else a new
+# terminal.
+open_project() {
+  local root=$1 session=${2:-} name tui started window
+  [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
+  name=$(tmux_session_of "$root")
+  project_tui "$root" "$session"
+  if [ -z "$started" ]; then
+    tell_tuis open "$root" "$session" || die "couldn't reach $name's TUI (through OpenCode's server)"
+  fi
   tmux select-window -t "$tui" \; select-pane -t "$tui" 2>/dev/null || true
   if window=$(window_of_tmux_session "$name"); then
     niri msg action focus-window --id "$window"
@@ -650,10 +664,47 @@ new_thread() {
   [ -z "${NIRI_SOCKET:-}" ] || open_session "$session"
 }
 
-# close: ends a session (OpenCode archives it), and closes its tab.
+# The folder of the TUI whose tabs have a session's, if any.
+tab_dir() {
+  jq -r --arg id "$1" 'first(.cwd // {} | to_entries[] | select(any(.value.tabs[]?; .sessionID == $id)) | .key) // empty' "$tabs_file" 2>/dev/null || true
+}
+
+# close --tab: closes a session's tab (it's still there, to open again), in
+# the TUIs that have it: its project's own (started, in the background, if
+# it's not running), or one you started in its folder.
+close_tab() {
+  local session=$1 dir tui started i
+  dir=$(tab_dir "$session")
+  if [ -z "$dir" ]; then echo "${D}Nothing to do: it's not in a tab.${N}"; return; fi
+  need_server
+  for i in $(seq 40); do
+    tell_tuis close "$dir" "$session" || die "couldn't reach its TUI (through OpenCode's server)"
+    sleep 0.5
+    if [ -z "$(tab_dir "$session")" ]; then echo "${G}✓${N} Closed its tab"; return; fi
+    # (No TUI there took it: the project's own, started.)
+    if [ "$i" -eq 3 ]; then
+      [ "$(root_of "$dir")" = "$dir" ] || die "its tab is in a TUI started in $dir: close it there"
+      project_tui "$dir"
+    fi
+  done
+  die "its TUI didn't close its tab"
+}
+
+# close: ends a session (OpenCode archives it), and closes its tab; --tab:
+# only closes its tab.
 close_thread() {
-  local session=${1:-} sess dir
-  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai close <session>"
+  local session="" tab="" sess dir
+  local usage="usage: smx ai close <session> [--tab]"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tab) tab=1 ;;
+      -*) die "$usage" ;;
+      *) [ -z "$session" ] || die "$usage"; session=$1 ;;
+    esac
+    shift
+  done
+  [ -n "$session" ] || die "$usage"
+  if [ -n "$tab" ]; then close_tab "$session"; return; fi
   need_server
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
@@ -664,9 +715,9 @@ close_thread() {
   server_curl -sf --max-time 10 -X PATCH -H 'Content-Type: application/json' -d '{"archived": true}' \
     "$(server_url)/api/session/$session" >/dev/null || die "couldn't close session $session"
   echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")"
-  # (And its tab, in its project's TUI.)
-  dir=$(jq -r '.location.directory // empty' <<<"$sess")
-  [ -z "$dir" ] || tell_tuis close "$(root_of "$dir")" "$session" || true
+  # (And its tab, in the TUI that has it, if that's running.)
+  dir=$(tab_dir "$session")
+  [ -z "$dir" ] || tell_tuis close "$dir" "$session" || true
 }
 
 # A folder's project, as watch names them: its repository's (main checkout's)
