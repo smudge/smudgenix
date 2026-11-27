@@ -1,11 +1,19 @@
 # Your own desktop settings, over the OS's (where its desktop is smudgenix's
 # niri): written to ~/.config/niri/smudgenix.kdl, which the OS's niri config
-# reads last. Anything left unset is the OS's.
+# reads last. Anything left unset is the OS's. Your binds are on Super's
+# shortcuts too (~/.config/smudgenix/shortcuts.json, over the OS's), and
+# your pills' icons (smudgenix.desktop.noctalia.settings).
 { config, pkgs, lib, ... }:
 
 let
   cfg = config.smudgenix.desktop;
   kdl = import ../../nixos/desktop/niri-kdl.nix { inherit lib; };
+  shortcuts = import ../../nixos/desktop/shortcuts.nix { inherit lib; };
+  inherit (cfg.noctalia) settings;
+  # (Only the icons you've given, over the OS's, but any your binds open.)
+  glyphs = shortcuts.glyphsOf { inherit settings; defaults = false; };
+  sheet = shortcuts.sheet { inherit (cfg) binds; glyphs = shortcuts.glyphsOf { inherit settings; }; }
+    // { inherit glyphs; };
 
   repeat = lib.filterAttrs (_: v: v != null) cfg.keyRepeat;
 
@@ -68,7 +76,10 @@ in
     };
   };
 
-  config = lib.mkIf (pkgs.stdenv.hostPlatform.isLinux && anything) {
-    xdg.configFile."niri/smudgenix.kdl".source = validated;
+  config = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
+    xdg.configFile."niri/smudgenix.kdl" = lib.mkIf anything { source = validated; };
+    xdg.configFile."smudgenix/shortcuts.json" = lib.mkIf (cfg.binds != { } || glyphs != { }) {
+      text = builtins.toJSON sheet;
+    };
   };
 }

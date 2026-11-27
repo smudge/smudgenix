@@ -14,7 +14,7 @@ let
   inherit (config.smudgenix) desktop;
   cfg = desktop.leader;
   socket = "/run/smudgenix-leader.sock";
-  shortcuts = import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; inherit (cfg) glyphs; };
+  shortcuts = import ./shortcuts.nix { inherit lib; };
 
   leader = pkgs.writeShellApplication {
     name = "smudgenix-leader";
@@ -48,15 +48,6 @@ in
       description = ''
         Milliseconds Super is held alone before the bar peeks out (until
         it's released). Released sooner, it's a tap.
-      '';
-    };
-    glyphs = lib.mkOption {
-      type = lib.types.attrsOf lib.types.str;
-      default = { };
-      internal = true;
-      description = ''
-        The bar's icons (from ./noctalia.nix) by the panel they open, and its
-        page, like "control-center audio": binds that open one show it.
       '';
     };
     overlayAfter = lib.mkOption {
@@ -128,7 +119,10 @@ in
 
     # The shortcuts sheet, for ../../noctalia/plugins/shortcuts.
     environment.etc."smudgenix/shortcuts.json".text =
-      builtins.toJSON { sections = shortcuts.sheet; };
+      builtins.toJSON (shortcuts.sheet {
+        inherit (desktop) binds;
+        glyphs = shortcuts.glyphsOf { inherit (desktop.noctalia) settings; };
+      });
 
     # Super+Shift+/ shows them too, in place of niri's list. (Over the default
     # binds, ../binds.nix, under a host's own.)

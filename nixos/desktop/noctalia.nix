@@ -16,25 +16,6 @@ let
   # (Agents on the bar, with the AI module: see ../ai.nix.)
   agents = config.smudgenix.ai.enable;
 
-  # The bar's pills' icons, by what they open, for the shortcuts sheet
-  # (./leader.nix): a bind that opens one shows it. (A key hint on the pills
-  # themselves, upstream, may be worth it someday.)
-  glyphs = {
-    launcher = "search";
-    clipboard = "clipboard";
-    control-center = "noctalia";
-    "smudgenix/agents:sessions" = "robot";
-    "control-center audio" = "volume";
-    "control-center media" = "music";
-    "control-center monitor" = "brightness-high";
-    "control-center power" = "battery-4";
-    "control-center network" = "wifi";
-    "control-center bluetooth" = "bluetooth";
-    "control-center calendar" = "clock";
-    "control-center notifications" = "bell";
-    session = "power";
-  };
-
   # Super and the F-row opens the bar's other pills' pages, by the icon on the
   # key where there is one (and with Shift, a neighbour's). Each as the F key
   # and what it sends with Fn-lock off, on a Framework.
@@ -273,8 +254,6 @@ in
     }];
 
     smudgenix.desktop.noctalia.settings = lib.mapAttrsRecursive (_: lib.mkDefault) defaults;
-
-    smudgenix.desktop.leader.glyphs = glyphs;
 
     programs.noctalia = {
       enable = true;
