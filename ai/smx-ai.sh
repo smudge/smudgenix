@@ -34,17 +34,15 @@ Agents (OpenCode), as part of the desktop.
   context --json          Where you are: the focused window's project
 
   decide "<line>" [--why "<why>"] [--kind direction|constraint|decision|open]
-         [--you | --project <name> | --thread <session>] [--check "<command>"]
-         [--supersedes <id>] [--answers <question>]
+         [--you | --project <name>] [--supersedes <id>]
                           Record a line of judgment (by default, a decision
-                          for the project you're in), in the decision log
+                          for the project you're in), in your decision log
   reopen <id> "<what's open about it now>"
                           Unsettle a line
-  confirm <id>            Make an agent's provisional call yours
   withdraw <id> ["<why>"] A line no longer stands, and nothing replaces it
-  log [--project <name> | --all] [--thread <session>] [--current] [--json]
-                          The decision log, newest first (--current: what
-                          stands now, and what agents asked you)
+  log [--project <name> | --all] [--current] [--json]
+                          Your decision log, newest first (--current: what
+                          stands now)
 
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
@@ -247,16 +245,6 @@ tui_changes() {
   done
 }
 
-# watch's decisions, while it runs: at first, and whenever they change.
-store_changes() {
-  local decided last_decided="" watcher=$$
-  while [ -e "/proc/$watcher" ]; do
-    decided=$(fold 2>/dev/null | jq -c '{type: "smx.decisions", current, briefs}') || decided=""
-    [ -z "$decided" ] || [ "$decided" = "$last_decided" ] || { echo "$decided"; last_decided=$decided; }
-    sleep 5
-  done
-}
-
 # watch: what agents are doing (see ./normalize.jq), for good: a snapshot, then
 # each change; and while the server's away, that it is (then, once it's back,
 # a snapshot). It retries every few seconds, which costs nothing.
@@ -264,7 +252,6 @@ watch_normalized() {
   local delay=1 last="" state
   {
     tui_changes &
-    store_changes &
     while true; do
       if connected_events; then delay=1; last=up; fi
       state=$(server_state)
@@ -405,20 +392,17 @@ shell_command() {
 # --- the store ----------------------------------------------------------------
 
 # smx ai's own: what agents' commands can't change (their sandbox has it
-# read-only). SMX_AI_STORE points elsewhere, for tests.
+# read-only, as all but their project). SMX_AI_STORE points elsewhere, for tests.
 store_dir=${SMX_AI_STORE:-${XDG_DATA_HOME:-$HOME/.local/share}/smudgenix}
 
 now_ms() { echo $(($(date +%s%N) / 1000000)); }
 
 # --- decisions: the log of your judgment ---------------------------------------
 
-# One line per entry, append-only: nothing's edited; replacing, reopening,
-# confirming and withdrawing are entries too, and what stands now is folded
-# from them all (see ./decisions.jq). Agents' commands can't write it (their
-# sandbox can't); they ask and decide provisionally through smudgenix's
-# OpenCode plugin, as an agent.
+# Only yours: one line per entry, append-only. Nothing's edited: replacing,
+# reopening and withdrawing are entries too, and what stands now is folded
+# from them all (see ./decisions.jq).
 decision_log="$store_dir/decisions.jsonl"
-brief_log="$store_dir/briefs.jsonl"
 line_kinds="direction constraint decision open"
 
 # A new entry, with an id nothing in the file has, and the time; printed.
@@ -436,20 +420,19 @@ append_entry() {
   ) 9>"$(dirname "$file")/.$(basename "$file").lock"
 }
 
-# An entry, by its id or the start of it.
+# A line, by its id or the start of it (of those that stand or did).
 find_entry() {
   local found
-  found=$(jq -c --arg id "$2" 'select(.id | startswith($id))' "$1" 2>/dev/null || true)
-  [ -n "$found" ] || die "no $3 $2" 4
-  [ "$(wc -l <<<"$found")" -eq 1 ] || die "$2 could be any of $(jq -r .id <<<"$found" | paste -sd ' '): give more of it"
+  found=$(fold | jq -c --arg id "$1" '.log[] | select(.kind != "withdraw" and (.id | startswith($id)))')
+  [ -n "$found" ] || die "no decision $1" 4
+  [ "$(wc -l <<<"$found")" -eq 1 ] || die "$1 could be any of $(jq -r .id <<<"$found" | paste -sd ' '): give more of it"
   echo "$found"
 }
 
-# What stands, for a project (and thread), or everything (none given).
+# What stands, for a project, or everything (none given).
 fold() {
-  jq -cn --slurpfile e <(cat "$decision_log" 2>/dev/null || true) --slurpfile b <(cat "$brief_log" 2>/dev/null || true) \
-    --arg p "${1:-}" --arg t "${2:-}" \
-    '{entries: $e, briefs: $b, project: ($p | select(. != "") // null), thread: ($t | select(. != "") // null)}' \
+  jq -cn --slurpfile e <(cat "$decision_log" 2>/dev/null || true) --arg p "${1:-}" \
+    '{entries: $e, project: ($p | select(. != "") // null)}' \
     | jq -c -f "$decisions_filter"
 }
 
@@ -460,40 +443,19 @@ one_line() {
   [ "${#2}" -le 200 ] || die "$1 is ${#2} characters: say it in 200 or fewer"
 }
 
-# The project (and its thread) a session's in.
-session_scope() {
-  local sess dir
-  sess=$(server_get "/api/session/$1") || die "no session $1 (or the server's unreachable)" 4
-  dir=$(jq -r '.data.location.directory // .location.directory // empty' <<<"$sess")
-  [ -n "$dir" ] || die "session $1 has no folder"
-  project_of "$dir"
-}
-
-# (Tells a thread's session, if it's there to tell; a decision stands either way.)
-tell_thread() {
-  [ -n "$1" ] || return 0
-  prompt_session "$1" "$2" 2>/dev/null || say "couldn't tell its session ($1); it'll see it next time it runs"
-}
-
-# decide: a line of judgment, in a scope: you (all your projects), a project
-# (by default, the one you're in), or a thread. It may replace one (a
-# decision on an open question, a change of mind) or answer what an agent
-# asked; a thread waiting on it is told.
+# decide: a line of judgment, yours (all your projects) or a project's (by
+# default, the one you're in). It may replace one (a decision on an open
+# question, a change of mind).
 decide_command() {
-  local text="" why="" kind=decision scope="" project="" thread="" check="" ref="" answers="" by=you session="" json=""
-  local usage="usage: smx ai decide \"<line>\" [--why \"<why>\"] [--kind direction|constraint|decision|open] [--you | --project <name> | --thread <session>] [--check \"<command>\"] [--supersedes <id>] [--answers <question>] [--json]"
+  local text="" why="" kind=decision scope="" project="" ref="" json=""
+  local usage="usage: smx ai decide \"<line>\" [--why \"<why>\"] [--kind direction|constraint|decision|open] [--you | --project <name>] [--supersedes <id>] [--json]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --why) why=${2:-}; shift ;;
       --kind) kind=${2:-}; shift ;;
       --you) scope=you ;;
-      --project) project=${2:-}; [ "$scope" = thread ] || scope=project; shift ;;
-      --thread) scope=thread thread=${2:-}; shift ;;
-      --check) check=${2:-}; shift ;;
+      --project) project=${2:-}; scope=project; shift ;;
       --supersedes) ref=${2:-}; shift ;;
-      --answers) answers=${2:-}; shift ;;
-      # (smudgenix's OpenCode plugin, for an agent's provisional call.)
-      --by-agent) by=agent session=${2:-}; shift ;;
       --json) json=1 ;;
       -*) die "$usage" ;;
       *) [ -z "$text" ] || die "$usage"; text=$1 ;;
@@ -504,52 +466,29 @@ decide_command() {
   [ -z "$why" ] || one_line "--why" "$why"
   case " $line_kinds " in *" $kind "*) ;; *) die "$usage" ;; esac
 
-  local target="" brief=""
+  local target=""
   if [ -n "$ref" ]; then
-    target=$(find_entry "$decision_log" "$ref" decision)
+    target=$(find_entry "$ref")
     ref=$(jq -r .id <<<"$target")
-    jq -e '.kind | IN("confirm", "withdraw") | not' <<<"$target" >/dev/null || die "$ref isn't a line to replace"
-    [ "$(fold | jq -r --arg r "$ref" '.log[] | select(.id == $r) | .status')" = current ] \
-      || die "$ref has been replaced or withdrawn already (smx ai log shows by what)"
+    [ "$(jq -r .status <<<"$target")" = current ] || die "$ref has been replaced or withdrawn already (smx ai log shows by what)"
   fi
-  if [ -n "$answers" ]; then
-    brief=$(find_entry "$brief_log" "$answers" question)
-    answers=$(jq -r .id <<<"$brief")
-    [ "$(fold | jq --arg b "$answers" '[.briefs[] | select(.id == $b)] | length')" -eq 1 ] || die "$answers has been answered already"
-  fi
-  # (By default, the scope of what it replaces or answers; else where you are.)
-  local from=${target:-$brief}
-  if [ -z "$scope" ] && [ -n "$from" ]; then
-    scope=$(jq -r .scope <<<"$from") project=$(jq -r '.project // empty' <<<"$from") thread=$(jq -r '.thread // empty' <<<"$from")
+  # (By default, the scope of what it replaces; else where you are.)
+  if [ -z "$scope" ] && [ -n "$target" ]; then
+    scope=$(jq -r .scope <<<"$target") project=$(jq -r '.project // empty' <<<"$target")
   elif [ -z "$scope" ]; then
     git rev-parse --show-toplevel >/dev/null 2>&1 || die "you're not in a project: say which (--project <name>), or --you for all of them"
     scope=project project=$(project_of "$PWD")
   fi
-  if [ "$scope" = thread ] && [ -z "$project" ]; then
-    # (An agent's: where it runs.)
-    if [ "$by" = agent ]; then project=$(project_of "$PWD"); else project=$(session_scope "$thread"); fi
-  fi
   [ "$scope" != project ] || [ -n "$project" ] || die "$usage"
-  [ "$by" != agent ] || [ -n "$session" ] || die "$usage"
+
   local entry
-  entry=$(jq -cn --arg kind "$kind" --arg scope "$scope" --arg project "$project" --arg thread "$thread" \
-    --arg text "$text" --arg why "$why" --arg by "$by" --arg session "$session" --arg check "$check" \
-    --arg ref "$ref" --arg answers "$answers" '
+  entry=$(jq -cn --arg kind "$kind" --arg scope "$scope" --arg project "$project" \
+    --arg text "$text" --arg why "$why" --arg ref "$ref" '
     def opt: if . == "" then null else . end;
-    {kind: $kind, scope: $scope, project: ($project | opt), thread: ($thread | opt), text: $text, why: ($why | opt),
-     by: $by, session: ($session | opt), check: ($check | opt), ref: ($ref | opt), answers: ($answers | opt)}
+    {kind: $kind, scope: $scope, project: (if $scope == "you" then null else $project | opt end),
+     text: $text, why: ($why | opt), by: "you", ref: ($ref | opt)}
     | with_entries(select(.value != null))')
   entry=$(append_entry "$decision_log" d "$entry")
-
-  # A thread waiting on it, or whose own call it replaces, hears of it.
-  local said
-  said="Decided ($(jq -r .id <<<"$entry")): $text${why:+ ($why)}"
-  if [ -n "$brief" ]; then
-    tell_thread "$(jq -r .session <<<"$brief")" "You asked: $(jq -r .question <<<"$brief") $said. Carry on, in line with it."
-  elif [ -n "$target" ] && [ "$(jq -r .by <<<"$target")" = agent ] && [ "$by" = you ]; then
-    tell_thread "$(jq -r .session <<<"$target")" "Your provisional call \"$(jq -r .text <<<"$target")\" is replaced. $said. Revise any work that relied on it."
-  fi
-
   if [ -n "$json" ]; then echo "$entry"; else show_entries <<<"$entry"; fi
 }
 
@@ -559,110 +498,60 @@ reopen_command() {
   decide_command "$2" --kind open --supersedes "$1"
 }
 
-# confirm: an agent's provisional call, made yours.
-confirm_command() {
-  local target id entry
-  [ "$#" -eq 1 ] || die "usage: smx ai confirm <id>"
-  target=$(find_entry "$decision_log" "$1" decision)
-  id=$(jq -r .id <<<"$target")
-  [ "$(fold | jq -r --arg r "$id" '.log[] | select(.id == $r) | "\(.status) \(.provisional)"')" = "current true" ] \
-    || die "$id isn't a provisional call that stands (smx ai log shows it)"
-  entry=$(append_entry "$decision_log" d "$(jq -cn --arg r "$id" '{kind: "confirm", ref: $r, by: "you"}')")
-  echo "${G}✓${N} Yours now: $(jq -r .text <<<"$target") ${D}($(jq -r .id <<<"$entry"))${N}"
-}
-
 # withdraw: a line that no longer stands, with nothing in its place.
 withdraw_command() {
   local target id entry
   [ "$#" -ge 1 ] && [ "$#" -le 2 ] || die "usage: smx ai withdraw <id> [\"<why>\"]"
   [ -z "${2:-}" ] || one_line "the why" "$2"
-  target=$(find_entry "$decision_log" "$1" decision)
+  target=$(find_entry "$1")
   id=$(jq -r .id <<<"$target")
-  [ "$(fold | jq -r --arg r "$id" '.log[] | select(.id == $r) | .status')" = current ] \
-    || die "$id doesn't stand now (smx ai log shows why)"
+  [ "$(jq -r .status <<<"$target")" = current ] || die "$id doesn't stand now (smx ai log shows why)"
   entry=$(append_entry "$decision_log" d "$(jq -cn --arg r "$id" --arg w "${2:-}" '{kind: "withdraw", ref: $r, by: "you"} + (if $w == "" then {} else {why: $w} end)')")
-  if [ "$(jq -r .by <<<"$target")" = agent ]; then
-    tell_thread "$(jq -r .session <<<"$target")" "Your provisional call \"$(jq -r .text <<<"$target")\" is withdrawn${2:+ ($2)}. Revise any work that relied on it."
-  fi
   echo "${D}Withdrawn: $(jq -r .text <<<"$target") ($(jq -r .id <<<"$entry"))${N}"
 }
 
 # Entries (JSON lines in), as the log's lines.
 show_entries() {
-  jq -r --arg D "$D" --arg N "$N" --arg Y "$Y" --arg A "$A" '
+  jq -r --arg D "$D" --arg N "$N" --arg A "$A" '
     def day: (.time / 1000 | strflocaltime("%Y-%m-%d"));
-    def where: if .scope == "you" then "you" elif .scope == "thread" then "\(.project) (thread)" else .project // "?" end;
+    def where: if .scope == "you" then "you" else .project // "?" end;
     "\(day)  \($D)\(where)\($N)  "
-    + (if .kind == "confirm" then "\($D)confirmed:\($N) \(.target // .ref)"
-       elif .kind == "withdraw" then "\($D)withdrew:\($N) \(.target // .ref)\(if .why then ": \(.why)" else "" end)"
+    + (if .kind == "withdraw" then "\($D)withdrew:\($N) \(.target // .ref)\(if .why then ": \(.why)" else "" end)"
        else (if .kind != "decision" then "\($A)\(.kind)\($N) " else "" end)
          + (if .status and .status != "current" then "\($D)\(.text)\($N)" else .text end)
          + (if .why then "\($D):\($N) \(.why)" else "" end) end)
-    + (if .provisional then "  \($Y)provisional\($N)\($D) (by an agent)\($N)" else "" end)
     + (if .status and .status != "current" then "  \($D)\(.status) by \(.by_entry)\($N)" else "" end)
     + "  \($D)\(.id)\($N)"'
 }
 
 # log: the log, newest first, for the project you're in (or one, or all);
-# --current: only what stands now, and what agents asked that's unanswered.
+# --current: only what stands now.
 log_command() {
-  local project="" all="" thread="" current="" json="" agent="" folded
-  local usage="usage: smx ai log [--project <name> | --all] [--thread <session>] [--current] [--json]"
+  local project="" all="" current="" json="" folded
+  local usage="usage: smx ai log [--project <name> | --all] [--current] [--json]"
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --project) project=${2:-}; [ -n "$project" ] || die "$usage"; shift ;;
       --all) all=1 ;;
-      --thread) thread=${2:-}; [ -n "$thread" ] || die "$usage"; shift ;;
       --current) current=1 ;;
-      # (smudgenix's OpenCode plugin: the fold, as agents get it.)
-      --for-agent) agent=1 ;;
       --json) json=1 ;;
       *) die "$usage" ;;
     esac
     shift
   done
-  if [ -n "$agent" ]; then agent_context "${project:-$(project_of "$PWD")}" "$thread"; return; fi
   if [ -z "$project" ] && [ -z "$all" ] && git rev-parse --show-toplevel >/dev/null 2>&1; then project=$(project_of "$PWD"); fi
-  if [ -n "$thread" ] && [ -z "$project" ]; then project=$(session_scope "$thread"); fi
-  folded=$(fold "$project" "$thread")
+  folded=$(fold "$project")
   if [ -n "$json" ]; then echo "$folded"; return; fi
   if [ -z "$current" ]; then
     jq -c '.log[]' <<<"$folded" | show_entries
     [ "$(jq '.log | length' <<<"$folded")" -gt 0 ] || echo "${D}Nothing decided yet${project:+ for $project}: smx ai decide \"<line>\" starts it.${N}"
     return
   fi
-  jq -r --arg D "$D" --arg N "$N" --arg Y "$Y" --arg A "$A" '
+  jq -r --arg D "$D" --arg N "$N" --arg A "$A" '
     def items($k; $title): [.current[] | select(.kind == $k)] as $l
-      | if $l == [] then empty else "\($A)\($title)\($N)", ($l[] | "  \(.text)\(if .why then "\($D):\($N) \(.why)" else "" end)"
-          + (if .provisional then "  \($Y)provisional\($N)" else "" end) + "  \($D)\(.id)\($N)"), "" end;
-    items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose"),
-    (if .briefs == [] then empty else "\($A)Asked, waiting on you\($N)",
-      (.briefs[] | "  \(.question)  \($D)\(.id)\($N)",
-        (.options | to_entries[] | "    \(.key + 1). \(.value.text)"),
-        (if .pick != null then "    \($D)its pick: \(.pick + 1)\($N)" else empty end)) end)' <<<"$folded"
-  [ "$(jq '(.current | length) + (.briefs | length)' <<<"$folded")" -gt 0 ] || echo "${D}Nothing stands yet${project:+ for $project}.${N}"
-}
-
-# The fold, as agents get it (smudgenix's OpenCode plugin adds it to their
-# context): what stands, and how to keep to it.
-agent_context() {
-  local folded
-  folded=$(fold "$1" "${2:-}")
-  jq -r '
-    def items($k; $title): [.current[] | select(.kind == $k)] as $l
-      | if $l == [] then empty else "\($title):", ($l[] | "- \(.text)\(if .why then " (\(.why))" else "" end)"
-          + (if .provisional then " [provisional, by an agent]" else "" end) + " [\(.id)]"), "" end;
-    "# The decision log for \(.project // "this work")",
-    "",
-    "These are the person'"'"'s decisions, folded from an append-only log: what stands now. Work within them.",
-    "- Direction says where the work is going; constraints are musts; open lines are deliberately undecided: do not settle them yourself.",
-    "- When a choice is a judgment call (a tradeoff the person would care about, hard to reverse, or nothing below covers it), ask the person with your question tool: one question, two to four one-line options, your recommendation first with \"(Recommended)\" after its label. What they answer is recorded in the decision log as their decision; carry on in line with it.",
-    "- A small, reversible call within the direction and constraints: make it, and record it with smudgenix_decide (provisional until the person confirms it). If it would break a constraint, ask instead.",
-    "- Never write decisions into files, plans or commit bodies: the log is where they live.",
-    "",
-    items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose"),
-    (if .briefs == [] then empty else "Asked, waiting on the person (do not decide these yourself):", (.briefs[] | "- \(.question) [\(.id)]"), "" end),
-    (if .current == [] then "Nothing is decided yet for this project." else empty end)' <<<"$folded"
+      | if $l == [] then empty else "\($A)\($title)\($N)", ($l[] | "  \(.text)\(if .why then "\($D):\($N) \(.why)" else "" end)  \($D)\(.id)\($N)"), "" end;
+    items("direction"; "Direction"), items("constraint"; "Constraints"), items("decision"; "Decisions"), items("open"; "Open, on purpose")' <<<"$folded"
+  [ "$(jq '.current | length' <<<"$folded")" -gt 0 ] || echo "${D}Nothing stands yet${project:+ for $project}.${N}"
 }
 
 # --- threads: new, close, context --------------------------------
@@ -934,7 +823,6 @@ case "${1:-}" in
   shell) shift; shell_command "$@" ;;
   decide) shift; decide_command "$@" ;;
   reopen) shift; reopen_command "$@" ;;
-  confirm) shift; confirm_command "$@" ;;
   withdraw) shift; withdraw_command "$@" ;;
   log) shift; log_command "$@" ;;
   new) shift; new_thread "$@" ;;

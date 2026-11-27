@@ -20,7 +20,6 @@ let
       options = {
         inherit (cfg.server) unsetEnvironment;
         sandbox = if cfg.sandbox.enable then lib.getExe smx-ai-sandbox else null;
-        smxAi = lib.getExe smx-ai;
       };
     }];
   });
