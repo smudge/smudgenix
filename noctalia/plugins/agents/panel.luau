@@ -1,7 +1,9 @@
 --!nonstrict
--- The agents overlay (Mod+A, or the bar widget): a launcher. Your recent
--- projects (the focused window's first, even if it has no sessions yet), each
--- with its recent sessions, marked when an agent's at work or needs you.
+-- The agents overlay (Mod+A, or the bar widget): a launcher. Your active
+-- projects, those with tabs open in their OpenCode TUIs, each with those
+-- tabs' sessions, in order (and, rarely, one at work or needing you without
+-- a tab), marked when an agent's at work or needs you. The focused window's
+-- project comes first, even if it's not active: that's how a project starts.
 -- Enter on a project starts a session there; on a session, opens it: either
 -- in the project's window, its OpenCode TUI (on that session's tab) and a
 -- shell side by side (smx ai new and open). That's all it does.
@@ -10,7 +12,6 @@ local open = false
 local selected = 1
 local rows = {} -- what Enter does on each: { project } | { session }
 local here = nil -- the focused window's project: { name, root }
-local perProject = 3 -- sessions shown under each project
 local spin = 0 -- the loaders' angle
 local spinning = false -- (whether any's shown)
 
@@ -54,23 +55,53 @@ local function mark(session)
   return ui.box({ width = 14, height = 14 })
 end
 
--- Projects, most recent first (the focused window's first), each with its
--- sessions (top-level ones), newest first.
+-- A project's name: its folder's (~ for your home).
+local function nameOf(root)
+  local ok, h = pcall(function() return os.getenv("HOME") end)
+  if ok and root == h then return "~" end
+  return root:match("([^/]+)/?$") or root
+end
+
+local function active(session)
+  return session.state == "working" or session.state == "needs-permission" or session.state == "needs-input"
+end
+
+-- The active projects (the focused window's first), most recently at work
+-- first, each with the sessions in its tabs, in order, then any top-level
+-- one at work or needing you without a tab.
 local function projects(agents)
-  local list, byRoot = {}, {}
-  local function project(name, root)
+  local list, byRoot, byId = {}, {}, {}
+  for _, session in agents.sessions or {} do
+    byId[session.id] = session
+  end
+  local function project(root, name)
     if not byRoot[root] then
-      byRoot[root] = { name = name, root = root, sessions = {} }
+      byRoot[root] = { name = name or nameOf(root), root = root, sessions = {}, has = {}, latest = 0 }
       table.insert(list, byRoot[root])
     end
     return byRoot[root]
   end
-  if here then project(here.name, here.root) end
-  for _, session in agents.sessions or {} do -- (newest first)
-    local root = session.root or session.dir
-    if session.parent == nil and root then
-      table.insert(project(session.project or root, root).sessions, session)
+  local function add(p, session)
+    if p.has[session.id] then return end
+    p.has[session.id] = true
+    table.insert(p.sessions, session)
+    p.latest = math.max(p.latest, session.updated or 0)
+  end
+  for root, tabs in agents.tabs or {} do
+    local p = project(root)
+    for _, tab in tabs do
+      add(p, byId[tab.id] or { id = tab.id, title = tab.title })
     end
+  end
+  for _, session in agents.sessions or {} do
+    local root = session.root or session.dir
+    if session.parent == nil and root and active(session) then add(project(root, session.project), session) end
+  end
+  table.sort(list, function(a, b) return a.latest > b.latest end)
+  if here then
+    local p = byRoot[here.root]
+    if p then table.remove(list, table.find(list, p)) else p = { name = here.name, root = here.root, sessions = {} } end
+    table.insert(list, 1, p)
   end
   return list
 end
@@ -118,8 +149,7 @@ function render()
       ui.label({ text = home(project.root), fontSize = 11, color = "on_surface/0.5", maxLines = 1, flexGrow = 1 }),
       ui.label({ text = "new session", fontSize = 11, color = "on_surface/0.5" }),
     })
-    for i, session in project.sessions do
-      if i > perProject then break end
+    for _, session in project.sessions do
       add({ session = session }, {
         ui.box({ width = 16, height = 1 }),
         mark(session),
@@ -129,7 +159,7 @@ function render()
     end
   end
   if #rows == 0 then
-    table.insert(shown, ui.label({ text = "No projects yet: open Mod+A from a terminal in one.", color = "on_surface/0.6" }))
+    table.insert(shown, ui.label({ text = "No projects open: open Mod+A from a terminal in one to start.", color = "on_surface/0.6" }))
   end
   selected = math.clamp(selected, 1, math.max(1, #rows))
 

@@ -1,12 +1,15 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
 # first event), `smx.tuis` (the projects open now, in their own tmux sessions),
-# and `smx.server`), smx ai's (v1) out:
+# `smx.tabs` (the TUIs' tabs) and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
 #   {"v":1,"type":"session",<session>}      (whenever one changes)
 #   {"v":1,"type":"removed","id":…}
 #   {"v":1,"type":"server","state":"up"|"stopped"|"down"}
+#   {"v":1,"type":"tabs","tabs":{<project's folder>: [{id, title}…]}}
+#                                         (the sessions in its TUIs' tabs,
+#                                         in order: whenever they change)
 #
 # (Stopped: not running, as until something needs it. Down: it should be, but
 # isn't reachable.)
@@ -107,6 +110,8 @@ foreach inputs as $e ({sessions: {}, tuis: [], emit: []};
     elif $e.type == "smx.tuis" then
       .tuis = $e.tuis
       | .emit = [.sessions[] | select(public($tuis) != public($e.tuis)) | {v: 1, type: "session"} + public($e.tuis)]
+    elif $e.type == "smx.tabs" then
+      .emit = [{v: 1, type: "tabs", tabs: $e.tabs}]
     elif $e.type == "smx.server" then
       .emit = [{v: 1, type: "server", state: $e.state}]
       | if $e.state != "up" then .sessions = {} else . end

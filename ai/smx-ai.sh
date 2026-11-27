@@ -238,13 +238,33 @@ tuis() {
 }
 
 # watch's TUIs, while it runs: whenever they change (and at first).
+# The TUIs' tabs, as an smx.tabs: for each project's folder, the sessions in
+# the tabs of the TUIs started in it (or in a folder of it), in order.
+# (OpenCode keeps them in $tabs_file, for each folder a TUI's started in.)
+tabs_file="${XDG_STATE_HOME:-$HOME/.local/state}/opencode/latest/tui/tabs.json"
+tabs() {
+  local dirs dir root_by="{}"
+  dirs=$(jq -r '.cwd // {} | keys[]' "$tabs_file" 2>/dev/null) || dirs=""
+  while IFS= read -r dir; do
+    # (Not folders that are gone, nor smx ai's own probe's.)
+    [ -d "$dir" ] && [ "$dir" != "$probe_dir" ] || continue
+    root_by=$(jq -c --arg d "$dir" --arg r "$(root_of "$dir")" '. + {($d): $r}' <<<"$root_by")
+  done <<<"$dirs"
+  jq -c --argjson roots "$root_by" '{type: "smx.tabs", tabs: (reduce ((.cwd // {}) | to_entries[]) as $e ({};
+      if $roots[$e.key] == null then . else .[$roots[$e.key]] += [$e.value.tabs[]? | {id: .sessionID, title}] end)
+    | with_entries(select(.value != [])))}' "$tabs_file" 2>/dev/null || echo '{"type":"smx.tabs","tabs":{}}'
+}
+
+# watch's projects and tabs, while it runs: at first, and whenever they change.
 tui_changes() {
-  local now last=""
+  local now last="" stamp last_stamp="-"
   local watcher=$$
   while [ -e "/proc/$watcher" ]; do
     now=$(tuis)
     [ "$now" = "$last" ] || { echo "$now"; last=$now; }
-    sleep 2
+    stamp=$(stat -c %Y.%s "$tabs_file" 2>/dev/null) || stamp=""
+    [ "$stamp" = "$last_stamp" ] || { tabs; last_stamp=$stamp; }
+    sleep 1
   done
 }
 

@@ -1,11 +1,12 @@
 --!nonstrict
 -- Follows `smx ai watch`, publishing what agents are doing ("agents": the
--- server's state, and its sessions, subagents' included) for the widget and
--- panel, and saying so when one needs you or fails, unless you're looking at
+-- server's state, its sessions, subagents' included, and the TUIs' tabs, by
+-- project) for the widget and panel, and saying so when one needs you or fails, unless you're looking at
 -- it (its window is focused).
 
 local sessions = {} -- by id
 local server = "stopped"
+local tabs = {} -- each project's TUIs' tabs, by its folder: { { id, title } }
 
 local function publish()
   local list = {}
@@ -13,7 +14,7 @@ local function publish()
     table.insert(list, session)
   end
   table.sort(list, function(a, b) return (a.updated or 0) > (b.updated or 0) end) -- (newest first)
-  noctalia.state.set("agents", { server = server, sessions = list })
+  noctalia.state.set("agents", { server = server, sessions = list, tabs = tabs })
 end
 
 -- The focused window's process, from niri's events (nil if none, or not niri).
@@ -172,6 +173,8 @@ local function onLine(line)
     sessions[event.id] = event
   elseif event.type == "removed" then
     sessions[event.id] = nil
+  elseif event.type == "tabs" then
+    tabs = event.tabs or {}
   elseif event.type == "server" then
     server = event.state
     if server ~= "up" then sessions = {} end
