@@ -11,6 +11,8 @@ local selected = 1
 local rows = {} -- what Enter does on each: { project } | { session }
 local here = nil -- the focused window's project: { name, root }
 local perProject = 3 -- sessions shown under each project
+local spin = 0 -- the loaders' angle
+local spinning = false -- (whether any's shown)
 
 -- --- Helpers -----------------------------------------------------------------
 
@@ -46,7 +48,8 @@ local function mark(session)
   if session.state == "needs-permission" or session.state == "needs-input" then
     return ui.glyph({ name = "alert-triangle", size = 14, color = "tertiary" })
   elseif session.state == "working" then
-    return ui.glyph({ name = "loader-2", size = 14, color = "primary" })
+    spinning = true
+    return ui.glyph({ name = "loader-2", size = 14, color = "primary", rotation = spin })
   end
   return ui.box({ width = 14, height = 14 })
 end
@@ -97,6 +100,7 @@ function render()
   if not open then return end
   local agents = noctalia.state.get("agents") or { server = "stopped", sessions = {} }
   rows = {}
+  spinning = false
   local shown = {}
   local function add(entry, children)
     table.insert(rows, entry)
@@ -129,6 +133,7 @@ function render()
   end
   selected = math.clamp(selected, 1, math.max(1, #rows))
 
+  panel.setNeedsFrameTick(spinning)
   panel.render(ui.column({ padding = 14, gap = 6 }, {
     ui.label({ text = "Agents", fontSize = 15, fontWeight = "bold" }),
     ui.scroll({ flexGrow = 1, gap = 2, revealKey = "row-" .. selected }, shown),
@@ -137,6 +142,17 @@ function render()
 end
 
 noctalia.state.watch("agents", render)
+
+-- (The loaders turn, a step every tenth of a second, while any's shown.)
+local sinceStep = 0
+function onFrameTick(deltaMs)
+  if not (open and spinning) then return end
+  sinceStep += deltaMs
+  if sinceStep < 100 then return end
+  sinceStep = 0
+  spin = (spin + 36) % 360
+  render()
+end
 
 -- (A session given, from a notification: it's selected. Else the focused
 -- window's project is, once smx ai says which it is.)
@@ -163,6 +179,7 @@ end
 
 function onClose()
   open = false
+  panel.setNeedsFrameTick(false)
 end
 
 function onKey(chord, pressed)

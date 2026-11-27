@@ -1,6 +1,6 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.20.0"
+version     = "0.20.1"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"

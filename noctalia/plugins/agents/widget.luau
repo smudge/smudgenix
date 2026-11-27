@@ -34,10 +34,10 @@ local function render(agents)
     barWidget.setText(tostring(needYou))
     barWidget.setTooltip(`Agents: {needYou} waiting on you`)
   elseif working > 0 then
-    -- (At work needs nothing from you: a quiet glyph, no count.)
+    -- (At work needs nothing from you: how many, in the accent.)
     barWidget.setGlyph("robot")
     barWidget.setGlyphColor("primary")
-    barWidget.setText("")
+    barWidget.setText(tostring(working))
     barWidget.setTooltip(`Agents: {working} at work`)
   else
     -- (Nothing for you: there, but quiet.)
