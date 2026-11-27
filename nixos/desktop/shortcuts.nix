@@ -2,7 +2,8 @@
 # shortcuts), from the binds (./binds.nix): just Super's, in sections, written
 # without "Super+" (it's held already), and with families like Super+1…9 on
 # one line. Spawns show only with a hotkey-overlay-title, and binds that open
-# something on the bar (`onBar`, panels' ids) only there, on its buttons.
+# something on the bar (`onBar`, panels' ids) only there, on its buttons. Keys
+# that do the same thing share a line.
 #
 # Gives { sheet; keysFor }: keysFor.<panel> is what opens it, like "Space".
 { lib }:
@@ -32,21 +33,26 @@ let
   directions = { H = "left"; J = "down"; K = "up"; L = "right"; };
   digits = map toString (lib.range 1 9);
 
-  # The panel a bind opens, if it does (see ./noctalia.nix's `msg`).
+  # The panel a bind opens, if it does (see ./noctalia.nix's `msg`), with
+  # its page if it has one: "launcher", "control-center audio".
   panelOf = action: let
-    m = builtins.match "spawn \"noctalia\" \"msg\" \"panel-(toggle|open)\" \"([^\"]+)\".*" action;
-  in if m == null then null else lib.elemAt m 1;
+    m = builtins.match "spawn \"noctalia\" \"msg\" \"panel-(toggle|open)\" \"([^\"]+)\"( \"([^\"]+)\")?" action;
+  in if m == null then null
+    else lib.elemAt m 1 + lib.optionalString (lib.elemAt m 3 != null) " ${lib.elemAt m 3}";
 
-  # One entry per bind: { section, keys, title } (or null, to leave it out).
+  # One entry per bind: { section, keys, title, panel, onBar } (or null, to
+  # leave it out).
   entry = key: value: let
     keys = keysOf key;
     last = lib.last keys;
     action = actionOf value;
     title = titleOf value;
+    panel = panelOf action;
     name = lib.head (lib.splitString " " action);
     hasWord = w: lib.hasInfix w name;
     section =
-      if title != null && lib.hasPrefix "spawn" action then "Open"
+      if panel != null && (lib.hasPrefix "control-center " panel || panel == "session") then "The bar"
+      else if title != null && lib.hasPrefix "spawn" action then "Open"
       else if hasWord "workspace" then "Workspaces"
       else if hasWord "monitor" then "Monitors"
       else if family != null || lib.hasSuffix "-first" name || lib.hasSuffix "-last" name then "Move around"
@@ -64,29 +70,42 @@ let
         title = humanize name;
       } else null;
   in
+    # (Media keys and Print are another key's, with Fn-lock off.)
     if keys == null || lib.any (p: lib.hasPrefix "XF86" p || lib.hasPrefix "Wheel" p
-      || lib.elem p [ "Left" "Right" "Up" "Down" "Page_Up" "Page_Down" ]) keys
+      || lib.elem p [ "Left" "Right" "Up" "Down" "Page_Up" "Page_Down" "Print" ]) keys
       || (lib.hasPrefix "spawn" action && title == null)
-      || lib.elem (panelOf action) onBar
     then null
-    else { inherit section; } // (if family != null then family else {
+    else { inherit section panel; onBar = lib.elem panel onBar; } // (if family != null then family else {
       inherit keys;
       title = if title != null then title else humanize action;
     });
 
   bound = lib.filterAttrs (_: v: v != null) binds;
   entries = lib.unique (lib.filter (e: e != null) (lib.mapAttrsToList entry bound));
+
+  # Keys that do the same thing, on one line: F1 F2 F3, Shift+F7 F8.
+  byLength = a: b: if lib.stringLength a != lib.stringLength b
+    then lib.stringLength a < lib.stringLength b else a < b;
+  lines = lib.concatMap (same: let
+    init = lib.init (lib.head same).keys;
+  in if lib.length same > 1 && lib.all (e: lib.init e.keys == init) same
+    then [ ((lib.head same) // {
+      keys = init ++ [ (lib.concatStringsSep " " (lib.sort byLength (map (e: lib.last e.keys) same))) ];
+    }) ]
+    else same) (lib.attrValues (lib.groupBy (e: "${e.section}\t${e.title}") entries));
+  joined = e: lib.concatStringsSep "+" e.keys;
+  # (In order by number, as people count: F4 before F10.)
+  natural = s: lib.concatMapStrings (p: if lib.isList p then lib.fixedWidthString 3 "0" (lib.head p) else p)
+    (builtins.split "([0-9]+)" s);
 in
 {
-  keysFor = lib.foldlAttrs (acc: key: value: let
-    panel = panelOf (actionOf value);
-    keys = keysOf key;
-  in if panel == null || keys == null || acc ? ${panel} then acc
-    else acc // { ${panel} = lib.concatStringsSep "+" keys; }) { } bound;
+  keysFor = lib.listToAttrs (map (e: lib.nameValuePair e.panel (joined e))
+    (lib.filter (e: e.panel != null) lines));
 
   sheet = lib.filter (s: s.binds != [ ]) (map (section: {
     title = section;
-    binds = map (e: { keys = lib.concatStringsSep "+" e.keys; inherit (e) title; })
-      (lib.filter (e: e.section == section) entries);
-  }) [ "Open" "Move around" "Windows" "Size" "Workspaces" "Monitors" "Session" ]);
+    binds = map (e: { keys = joined e; inherit (e) title; })
+      (lib.sort (a: b: natural (joined a) < natural (joined b))
+        (lib.filter (e: e.section == section && !e.onBar) lines));
+  }) [ "Open" "The bar" "Move around" "Windows" "Size" "Workspaces" "Monitors" "Session" ]);
 }

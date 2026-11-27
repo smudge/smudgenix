@@ -41,7 +41,8 @@ the space, and shows whenever something drops from it. Super is the leader
 key: tap it alone for the Control Center, hold it and the bar peeks out; keep
 holding and its shortcuts show, on the bar's buttons and below, until you
 let go (`smudgenix.desktop.leader`).
-Super+Shift+/ shows them too.
+Super+Shift+/ shows them too. Super and the F-row open the bar's pages, by the
+icon on the key (volume, media, brightness, network), and the rest beside them.
 
 ## Userland only (any Nix-enabled home)
 

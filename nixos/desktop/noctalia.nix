@@ -30,6 +30,23 @@ let
   };
   agentsPanel = "smudgenix/agents:sessions";
 
+  # Super and the F-row opens the bar's other pills' pages, by the icon on the
+  # key where there is one (and with Shift, a neighbour's). Each as the F key
+  # and what it sends with Fn-lock off, on a Framework.
+  pills = lib.foldl' (acc: p: acc // lib.listToAttrs (map (key: {
+    name = "Mod+${key}";
+    value = msg [ "panel-toggle" "control-center" p.page ] // { hotkey-overlay-title = p.title; };
+  }) p.keys)) { } [
+    { page = "audio"; title = "Show Volume"; keys = [ "F1" "F2" "F3" "XF86AudioMute" "XF86AudioLowerVolume" "XF86AudioRaiseVolume" ]; }
+    { page = "media"; title = "Show Media"; keys = [ "F4" "F5" "F6" "XF86AudioPrev" "XF86AudioPlay" "XF86AudioNext" ]; }
+    { page = "monitor"; title = "Show Brightness"; keys = [ "F7" "F8" "XF86MonBrightnessDown" "XF86MonBrightnessUp" ]; }
+    { page = "power"; title = "Show Battery"; keys = [ "Shift+F7" "Shift+F8" "Shift+XF86MonBrightnessDown" "Shift+XF86MonBrightnessUp" ]; }
+    { page = "network"; title = "Show Network"; keys = [ "F10" "XF86RFKill" ]; }
+    { page = "bluetooth"; title = "Show Bluetooth"; keys = [ "Shift+F10" "Shift+XF86RFKill" ]; }
+    { page = "calendar"; title = "Show Calendar"; keys = [ "F11" "Print" ]; }
+    { page = "notifications"; title = "Show Notifications"; keys = [ "F12" "XF86AudioMedia" ]; }
+  ];
+
   # smudgenix's own plugins (../../noctalia/plugins), checked the way Noctalia
   # loads them. (A home can use a checkout's instead, as you edit them: see
   # ../../nix/modules/noctalia.nix.)
@@ -284,6 +301,10 @@ in
       "Super+Alt+L" = msg [ "session" "lock" ] // { hotkey-overlay-title = "Lock the Screen"; };
     } // lib.optionalAttrs agents {
       "Mod+A" = msg [ "panel-toggle" "smudgenix/agents:sessions" ] // { hotkey-overlay-title = "Show Agents"; };
-    });
+    } // pills) // {
+      # (Over niri's quit prompt, ./binds.nix: the session menu has it.)
+      "Mod+Shift+E" = lib.mkOverride 900
+        (msg [ "panel-toggle" "session" ] // { hotkey-overlay-title = "Show the Session Menu"; });
+    };
   }) ];
 }
