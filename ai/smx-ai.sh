@@ -31,7 +31,7 @@ Agents (OpenCode), as part of the desktop.
   new [--dir <folder>] ["<what to do>"]
                           Start a session in a folder (by default this one),
                           and open it (as open does)
-  close <session>         End it (OpenCode archives it)
+  close <session>         End it (OpenCode archives it), and close its tab
   context --json          Where you are: the focused window's project
 
   decide "<line>" [--why "<why>"] [--kind direction|constraint|decision|open]
@@ -47,10 +47,10 @@ Agents (OpenCode), as part of the desktop.
 
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
-  open <session>          A thread, in a tmux session of its own: its TUI,
-                          and a shell where its work is (its window, or a
+  open <session>          A session, on its tab in its project's window: a
+                          tmux session of the project's own, its OpenCode
+                          TUI and a shell side by side (that window, or a
                           new one)
-  shell <session>         A shell where a thread's work is: its folder
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -220,21 +220,21 @@ server_state() {
   if ctl is-active --quiet "$unit" || ctl is-failed --quiet "$unit"; then echo down; else echo stopped; fi
 }
 
-# The threads open now, in tmux sessions of their own (smx ai open), as an
-# smx.tuis: for each, its session, and the processes it's shown through, its
+# The projects open now, in tmux sessions of their own (smx ai open), as an
+# smx.tuis: for each, its folder, and the processes it's shown through, its
 # terminals' up (so the terminals are among them), if any shows it.
 tuis() {
   local procs sessions clients
   procs=$(ps -u "$(id -u)" -o pid=,ppid=)
-  sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+  sessions=$(tmux list-sessions -F '#{session_name}	#{@smx_root}' 2>/dev/null || true)
   clients=$(tmux list-clients -F '#{client_pid}	#{session_name}' 2>/dev/null || true)
   jq -cn --arg procs "$procs" --arg sessions "$sessions" --arg clients "$clients" '
     ($procs | split("\n") | map(select(. != "") | [splits(" +") | select(. != "") | tonumber])
       | map({key: (.[0] | tostring), value: .[1]}) | from_entries) as $parent
     | def up: [recurse(($parent[tostring] // 1) | select(. > 1))];
     ($clients | split("\n") | map(select(. != "") | split("\t") | {pid: (.[0] | tonumber), session: .[1]})) as $client
-    | {type: "smx.tuis", tuis: [$sessions | split("\n")[] | select(startswith("smx-")) as $name
-        | {id: $name[4:], title: null, seen: [$client[] | select(.session == $name) | .pid | up[]]}]}'
+    | {type: "smx.tuis", tuis: [$sessions | split("\n")[] | split("\t") | select(.[0] | startswith("smx-")) | select((.[1] // "") != "")
+        | .[0] as $name | {root: .[1], seen: [$client[] | select(.session == $name) | .pid | up[]]}]}'
 }
 
 # watch's TUIs, while it runs: whenever they change (and at first).
@@ -334,10 +334,22 @@ ancestors() {
   done
 }
 
-# A thread's own tmux session: its TUI and a shell where its work is, side by
-# side, in one terminal. smx ai opens only these, never guessing at TUIs you
-# opened yourself (and tmux-snap leaves them be).
-tmux_session_of() { echo "smx-$1"; }
+# A folder's project's folder: its repository's (main checkout's), else its own.
+root_of() {
+  local root
+  root=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && root=${root%/.git} || root=$1
+  echo "$root"
+}
+
+# A project's own tmux session: its OpenCode TUI (started in its folder, so its
+# tabs are the project's sessions) and a shell beside it, in one terminal.
+# smx ai opens only these, never guessing at TUIs you opened yourself (and
+# tmux-snap leaves them be). Its options: @smx_root, the project's folder, and
+# @smx_tui, the TUI's pane.
+tmux_session_of() {
+  local base=${1##*/}
+  echo "smx-${base//[^A-Za-z0-9_-]/_}-$(printf %s "$1" | md5sum | cut -c1-6)"
+}
 
 # The niri window showing a tmux session (its client's terminal), if any.
 window_of_tmux_session() {
@@ -351,7 +363,7 @@ window_of_tmux_session() {
   return 1
 }
 
-# Where a thread's work is: its session's folder.
+# A session's folder.
 work_dir() {
   local dir session
   session=$(server_curl -sf --max-time 10 "$(server_url)/api/session/$1" | jq -c '.data // empty') || true
@@ -361,21 +373,41 @@ work_dir() {
   echo "$dir"
 }
 
-# open: a thread, in its own tmux session (made the first time: its TUI, and
-# smx ai shell beside it): its window if it's on screen, else in a new
-# terminal.
-open_session() {
-  local id=${1:-} name dir window self
-  [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai open <session>"
+# Asks the TUIs in a project's folder ($2), through smudgenix's OpenCode
+# plugin, to open ($1) a session's tab (or a new session: none given), or to
+# close one.
+tell_tuis() {
+  server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg s "${3:-}" '{input: (if $s == "" then {} else {session: $s} end)}')" \
+    "$(server_url)/api/rpc/smudgenix/$1?location%5Bdirectory%5D=$(jq -rn --arg r "$2" '$r | @uri')" >/dev/null
+}
+
+# A project, on screen: its tmux session (made the first time), its TUI on a
+# session's tab (or a new session: none given); its window, if it's on
+# screen, else a new terminal.
+open_project() {
+  local root=$1 session=${2:-} name tui="" window
+  local tui_command=("$opencode")
+  [ -z "$session" ] || tui_command+=(-s "$session")
   [ -n "${NIRI_SOCKET:-}" ] || die "smx ai open needs the desktop (run it from your session, not an agent)"
-  name=$(tmux_session_of "$id")
+  name=$(tmux_session_of "$root")
   if ! tmux has-session -t "=$name" 2>/dev/null; then
-    dir=$(work_dir "$id")
-    self=$(readlink -f "$0" 2>/dev/null) && [ -x "$self" ] || self=$(command -v smx-ai)
-    tmux new-session -d -s "$name" -c "$dir" -x 200 -y 50 "$opencode" -s "$id" \
+    tui=$(tmux new-session -d -P -F '#{pane_id}' -s "$name" -c "$root" -x 200 -y 50 "${tui_command[@]}") \
       || die "couldn't start tmux session $name"
-    tmux split-window -h -d -l 40% -t "=$name:" -c "$dir" "$self" shell "$id" || true
+    tmux set-option -t "=$name:" @smx_root "$root"
+    tmux split-window -h -d -l 40% -t "$tui" -c "$root" || true
+  else
+    tui=$(tmux show-options -v -t "=$name:" @smx_tui 2>/dev/null) || tui=""
+    if [ -n "$tui" ] && tmux list-panes -s -t "=$name" -F '#{pane_id}' | grep -qxF -- "$tui"; then
+      tell_tuis open "$root" "$session" || die "couldn't reach $name's TUI (through OpenCode's server)"
+    else
+      # (Its TUI's gone: a new one, on the left.)
+      tui=$(tmux split-window -h -b -P -F '#{pane_id}' -l 60% -t "=$name:" -c "$root" "${tui_command[@]}") \
+        || die "couldn't start a TUI in $name"
+    fi
   fi
+  tmux set-option -t "=$name:" @smx_tui "$tui"
+  tmux select-window -t "$tui" \; select-pane -t "$tui" 2>/dev/null || true
   if window=$(window_of_tmux_session "$name"); then
     niri msg action focus-window --id "$window"
     return
@@ -384,13 +416,10 @@ open_session() {
   setsid -f xdg-terminal-exec --app-id=smudgenix.agent tmux attach-session -t "=$name" </dev/null &>/dev/null
 }
 
-# shell: a shell where a thread's work is: its folder.
-shell_command() {
-  local id=${1:-} dir
-  [ -n "$id" ] && [ "$#" -eq 1 ] || die "usage: smx ai shell <session>"
-  dir=$(work_dir "$id")
-  cd "$dir" || die "no folder $dir" 4
-  exec "${SHELL:-bash}" -i
+# open: a session, on its tab in its project's TUI.
+open_session() {
+  [ -n "${1:-}" ] && [ "$#" -eq 1 ] || die "usage: smx ai open <session>"
+  open_project "$(root_of "$(work_dir "$1")")" "$1"
 }
 
 # --- the store ----------------------------------------------------------------
@@ -570,7 +599,8 @@ prompt_session() {
 }
 
 # new: starts a session in a folder (by default this one), with what to do if
-# you say, and opens it (on the desktop: see open).
+# you say, and opens it (on the desktop: see open). On the desktop, with
+# nothing to do yet, its project's TUI starts it (in the project's folder).
 new_thread() {
   local dir=$PWD prompt="" session
   local usage="usage: smx ai new [--dir <folder>] [\"<what to do>\"]"
@@ -585,6 +615,10 @@ new_thread() {
   [ -d "$dir" ] || die "no folder $dir" 4
   dir=$(cd "$dir" && pwd)
   need_server
+  if [ -z "$prompt" ] && [ -n "${NIRI_SOCKET:-}" ]; then
+    open_project "$(root_of "$dir")"
+    return
+  fi
   session=$(server_curl -sf --max-time 15 -X POST -H 'Content-Type: application/json' \
     -d "$(jq -cn --arg d "$dir" '{location: {directory: $d}}')" "$(server_url)/api/session" \
     | jq -r '.data.id // .id // empty') || true
@@ -596,30 +630,30 @@ new_thread() {
   [ -z "${NIRI_SOCKET:-}" ] || open_session "$session"
 }
 
-# close: ends a thread (OpenCode archives its session).
+# close: ends a session (OpenCode archives it), and closes its tab.
 close_thread() {
-  local session=${1:-} sess
+  local session=${1:-} sess dir
   [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai close <session>"
   need_server
   sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
   [ -n "$sess" ] || die "no session $session" 4
   if [ "$(jq -r '.time.archived // empty' <<<"$sess")" != "" ]; then
     echo "${D}Nothing to do: it's closed already.${N}"
-    tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
     return
   fi
   server_curl -sf --max-time 10 -X PATCH -H 'Content-Type: application/json' -d '{"archived": true}' \
     "$(server_url)/api/session/$session" >/dev/null || die "couldn't close session $session"
   echo "${G}✓${N} Closed: $(jq -r '.title // .id' <<<"$sess")"
-  # (Its tmux session too, last: you may be in it.)
-  tmux kill-session -t "=$(tmux_session_of "$session")" 2>/dev/null || true
+  # (And its tab, in its project's TUI.)
+  dir=$(jq -r '.location.directory // empty' <<<"$sess")
+  [ -z "$dir" ] || tell_tuis close "$(root_of "$dir")" "$session" || true
 }
 
 # A folder's project, as watch names them: its repository's (main checkout's)
 # folder, else its own; ~ for your home.
 project_of() {
   local project
-  project=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && project=${project%/.git} || project=$1
+  project=$(root_of "$1")
   if [ "$project" = "$HOME" ]; then echo "~"; else basename "$project"; fi
 }
 
@@ -645,7 +679,7 @@ context() {
   fi
   local root
   if [ -n "$dir" ] && [ -d "$dir" ]; then
-    root=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && root=${root%/.git} || root=$dir
+    root=$(root_of "$dir")
     jq -cn --arg d "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || echo "$dir")" --arg p "$(project_of "$dir")" --arg r "$root" \
       '{v: 1, dir: $d, project: $p, root: $r}'
   else
@@ -818,7 +852,6 @@ case "${1:-}" in
   watch) shift; watch_command "$@" ;;
   status) shift; status "$@" ;;
   open) shift; open_session "$@" ;;
-  shell) shift; shell_command "$@" ;;
   decide) shift; decide_command "$@" ;;
   reopen) shift; reopen_command "$@" ;;
   withdraw) shift; withdraw_command "$@" ;;

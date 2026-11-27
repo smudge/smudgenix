@@ -3,8 +3,8 @@
 -- projects (the focused window's first, even if it has no sessions yet), each
 -- with its recent sessions, marked when an agent's at work or needs you.
 -- Enter on a project starts a session there; on a session, opens it: either
--- in a terminal of its own, its OpenCode TUI and a shell side by side (smx ai
--- new and open). That's all it does.
+-- in the project's window, its OpenCode TUI (on that session's tab) and a
+-- shell side by side (smx ai new and open). That's all it does.
 
 local open = false
 local selected = 1

@@ -103,12 +103,14 @@ or is at work, and you're only interrupted (a notification) when one needs
 you or fails. Mod+A (or a click on it) is a launcher: your recent projects
 (the one you're in first), each with its recent sessions, marked when an
 agent's at work or needs you. Enter on a project starts a session there; on
-a session, opens it. Either way it's a terminal of its own (a tmux session,
-`smx-<session>`), with its OpenCode TUI and, beside it, a shell in its
-folder; you work there, as you would with OpenCode anyway. From a terminal,
+a session, opens it. Either way it's the project's own window (a tmux
+session, `smx-<project>-<hash>`), opened full width: its OpenCode TUI, on that
+session's tab (smudgenix's OpenCode plugin tells a running TUI which), and
+beside it a shell in its folder. You work there, as you would with OpenCode
+anyway, switching between its sessions' tabs. From a terminal,
 `smx ai new ["<what to do>"]` starts one in the folder you're in, and `smx
 ai open <session>`, `close`, `status` and `watch` do the rest. Closing a
-session archives it (nothing's deleted) and ends its tmux session.
+session archives it (nothing's deleted) and closes its tab.
 
 What you decide goes in a decision log: one line each, like a changelog,
 kept privately in `~/.local/share/smudgenix/decisions.jsonl`, and only what

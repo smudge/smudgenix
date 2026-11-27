@@ -1,7 +1,7 @@
-{"type":"smx.tuis","tuis":[{"id":"ses_b","title":null,"seen":[]}]}
-{"type":"smx.snapshot","sessions":[{"id":"ses_a","title":"Refactor the parser for streaming input","dir":"/home/example/src/project/lib","project":"project","parent":null,"updated":1795400000000,"running":false,"outcome":"done","unseen":false,"last":"## Done\n\nThe parser **streams** now:\n`parse()` takes a reader."},{"id":"ses_b","title":"Tidy the config","dir":"/home/example/.config","project":null,"parent":null,"updated":1795300000000,"running":false,"outcome":"done","unseen":false},{"id":"ses_c","title":"Explore the call sites","dir":"/home/example/src/project","project":"project","parent":"ses_a","updated":1795400000000,"running":false,"outcome":"done","unseen":false}]}
-{"type":"smx.tuis","tuis":[{"id":"ses_b","title":null,"seen":[]},{"id":"ses_a","title":null,"seen":[300,200,100]}]}
-{"type":"smx.tuis","tuis":[{"id":"ses_a","title":null,"seen":[300,200,100]}]}
+{"type":"smx.tuis","tuis":[{"root":"/home/example/.config","seen":[]}]}
+{"type":"smx.snapshot","sessions":[{"id":"ses_a","title":"Refactor the parser for streaming input","dir":"/home/example/src/project/lib","project":"project","parent":null,"updated":1795400000000,"running":false,"outcome":"done","unseen":false,"last":"## Done\n\nThe parser **streams** now:\n`parse()` takes a reader.","root":"/home/example/src/project"},{"id":"ses_b","title":"Tidy the config","dir":"/home/example/.config","project":null,"parent":null,"updated":1795300000000,"running":false,"outcome":"done","unseen":false},{"id":"ses_c","title":"Explore the call sites","dir":"/home/example/src/project","project":"project","parent":"ses_a","updated":1795400000000,"running":false,"outcome":"done","unseen":false}]}
+{"type":"smx.tuis","tuis":[{"root":"/home/example/.config","seen":[]},{"root":"/home/example/src/project","seen":[300,200,100]}]}
+{"type":"smx.tuis","tuis":[{"root":"/home/example/src/project","seen":[300,200,100]}]}
 {"created":1795400010000,"type":"session.execution.started","data":{"sessionID":"ses_a"}}
 {"created":1795400011000,"type":"session.text.ended","data":{"sessionID":"ses_a","text":"Looking at the call sites first."}}
-{"created":1795400012000,"type":"smx.tuis","tuis":[{"id":"ses_a","title":null,"seen":[]}]}
+{"created":1795400012000,"type":"smx.tuis","tuis":[{"root":"/home/example/src/project","seen":[]}]}

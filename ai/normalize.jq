@@ -1,6 +1,6 @@
 # smx ai's normalizer: OpenCode's server events in (JSON lines, plus smx ai's
 # own `smx.snapshot`, `smx.session` (one the snapshot didn't have, before its
-# first event), `smx.tuis` (the threads open now, in their own tmux sessions),
+# first event), `smx.tuis` (the projects open now, in their own tmux sessions),
 # and `smx.server`), smx ai's (v1) out:
 #
 #   {"v":1,"type":"snapshot","server":"up","sessions":[<session>…]}
@@ -17,8 +17,8 @@
 # whether it's finished since anyone last looked at it; updated is when (in
 # ms) it last changed, or null; last is its latest reply, in a line, or null;
 # about is what it's about (its latest compaction's objective), in a line, or
-# null; open is whether it's open (its tmux session, smx ai open), and
-# terminals the processes it's on screen through (its terminal's among them),
+# null; open is whether its project is open (its tmux session, smx ai open),
+# and terminals the processes that.s on screen through (its terminal's among them),
 # if any; and project is its repository's name, or null, and root its
 # folder (the main checkout's), or null.
 #
@@ -35,9 +35,9 @@
 def blank($id; $dir):
   {id: $id, title: null, dir: $dir, parent: null, running: false, outcome: "idle", unseen: false, updated: null, started: null, last: null, about: null, project: null, permissions: [], forms: []};
 
-# The thread sessions (of these) showing a session.
+# The project sessions (of these) showing a session's project.
 def tuis_on($tuis):
-  . as $s | [$tuis[] | select(.id == $s.id)];
+  (.root // .dir) as $root | [$tuis[] | select(.root == $root)];
 
 def public($tuis):
   tuis_on($tuis) as $on
