@@ -47,7 +47,6 @@ let
       opencode=${lib.getExe opencode}
       normalize=${../ai/normalize.jq}
       hotspots_filter=${../ai/hotspots.jq}
-      history_filter=${../ai/history.jq}
       decisions_filter=${../ai/decisions.jq}
       jj=${lib.getExe pkgs.jujutsu}
       sandbox=${if cfg.sandbox.enable then lib.getExe smx-ai-sandbox else ""}

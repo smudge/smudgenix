@@ -30,9 +30,6 @@ Agents (OpenCode), as part of the desktop.
 
   new [--dir <folder>] [--tui] "<what to do>"
                           Start a thread of work, in the background (or a TUI)
-  reply <session> "<what to say>"
-                          Tell it more
-  park <session>          Not now (it stays open)
   close <session> [--accept | --discard]
                           End it (approving or setting aside its layers)
   context --json          Where you are: the focused window's project
@@ -68,9 +65,6 @@ Agents (OpenCode), as part of the desktop.
                           before they stop (by default 3)
   pause …                 (For agents: why one stopped)
 
-  history [--days <n> | --since <date>] [--project <name>] [--json]
-                          Your threads, day by day, closed ones too (by
-                          default, this week)
   status [--json]         What agents are doing now, or have open (--json:
                           and recent sessions too)
   open <session>          A thread, in a tmux session of its own: its TUI,
@@ -78,12 +72,6 @@ Agents (OpenCode), as part of the desktop.
                           new one)
   shell <session>         A shell where a thread's work is: its workspace
                           (its stack shown), else its folder
-  allow <request> [--always]
-                          Allow what an agent asked to do (--always: and
-                          the like, in its project, from now on)
-  deny <request>          Don't
-  allowed [--json]        What's allowed from now on
-  allowed revoke <id>     Ask again for it
   watch                   What agents are doing: a snapshot, then each
                           change, as JSON lines
   watch --raw             The server's own events, as JSON lines
@@ -129,6 +117,22 @@ watch_raw() {
   done
 }
 
+
+# Permission requests (JSON lines in and out, as the server has them), with
+# where they'd run: the shell call's own workdir (not the agent's description
+# of it), against the session's folder ($1), or else that folder.
+with_cwd() {
+  local request session message call input
+  while IFS= read -r request; do
+    [ -n "$request" ] || continue
+    IFS=$'\t' read -r session message call < <(jq -r '[.sessionID, (.source.messageID // "-"), (.source.id // "-")] | @tsv' <<<"$request")
+    input=$(server_get "/api/session/$session/message/$message" | jq -c --arg call "$call" \
+      'first(.data.content[]? | select(.type == "tool" and .id == $call) | .state.input) // {}' 2>/dev/null) || input=""
+    [ -n "$input" ] || input='{}'
+    jq -c --argjson i "$input" --arg d "$1" \
+      '. + {cwd: ($i.workdir // null | if . == null then $d elif startswith("/") then . else $d + "/" + . end)}' <<<"$request"
+  done
+}
 
 # A session from the server, as smx ai's normalizer takes it (./normalize.jq).
 # shellcheck disable=SC2016
@@ -350,11 +354,6 @@ status() {
             *) mark="${D}-${N}" ;;
           esac
           printf '%s %-22s %s  %s\n' "$mark" "$state$([ "$flags" = - ] || echo ", $flags")" "$title" "${D}$dir  $id${N}"
-          # (What it asks: smx ai allow|deny <request>.)
-          jq -c --arg id "$id" '.sessions[] | select(.id == $id) | .permissions[]' <<<"$now" \
-            | while IFS= read -r request; do
-                printf '    %s  %s\n' "$(described <<<"$request")" "${D}$(jq -r .id <<<"$request")${N}"
-              done
         done
   fi
   [ "$(jq -r '.state // "up"' <<<"$now")" != down ] || exit 3
@@ -1478,7 +1477,7 @@ lead_command() {
   echo "${G}✓${N} Agents in $project work up to $n layers ahead of you."
 }
 
-# --- threads: new, reply, close, park, context --------------------------------
+# --- threads: new, close, context --------------------------------
 
 need_server() {
   if [ -z "$(server_url)" ] || ! server_get "/api/session?limit=1" >/dev/null; then die "OpenCode's server isn't reachable" 3; fi
@@ -1536,32 +1535,6 @@ new_thread() {
     echo "${G}✓${N} Started, in the background: $session ${D}($dir)${N}"
   fi
   [ -z "$tui" ] || open_session "$session"
-}
-
-# reply: tells a thread more (it goes back to work).
-reply() {
-  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ "$#" -eq 2 ] || die "usage: smx ai reply <session> \"<what to say>\""
-  need_server
-  server_get "/api/session/$1" >/dev/null || die "no session $1" 4
-  prompt_session "$1" "$2" || die "couldn't send it to session $1"
-  echo "${G}✓${N} Sent: it's back at work."
-}
-
-# park: not now: it's seen (so not news).
-park() {
-  local session=${1:-} sess
-  [ -n "$session" ] && [ "$#" -eq 1 ] || die "usage: smx ai park <session>"
-  need_server
-  sess=$(server_get "/api/session/$session" | jq -c '.data // empty') || true
-  [ -n "$sess" ] || die "no session $session" 4
-  if [ "$(jq '(.time.busy // 0) > (.time.idle // 0)' <<<"$sess")" = true ]; then
-    echo "${D}Nothing to do: it's at work, and comes back when it's done.${N}"
-    return
-  fi
-  server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
-    -d "$(jq -cn --argjson i "$(jq '.time.idle // 0' <<<"$sess")" '{idle: $i}')" \
-    "$(server_url)/api/session/$session/view" >/dev/null || die "couldn't park session $session"
-  echo "${D}Parked: $(jq -r '.title // .id' <<<"$sess")${N}"
 }
 
 # close: ends a thread (OpenCode archives its session). Work waiting for
@@ -1651,197 +1624,6 @@ context() {
       '{v: 1, dir: $d, project: $p}'
   else
     echo '{"v":1,"dir":null,"project":null}'
-  fi
-}
-
-# --- history ------------------------------------------------------------------
-
-# history: your threads, day by day, closed ones too (without reopening
-# them): when, where, how they ended, and what they cost.
-history_command() {
-  local days=7 since="" project="" json="" since_ms work page cursor="" dir
-  local usage="usage: smx ai history [--days <n> | --since <date>] [--project <name>] [--json]"
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --days) days=${2:-}; shift; [[ "$days" =~ ^[1-9][0-9]*$ ]] || die "$usage" ;;
-      --since) since=${2:-}; shift; [ -n "$since" ] || die "$usage" ;;
-      --project) project=${2:-}; shift; [ -n "$project" ] || die "$usage" ;;
-      --json) json=1 ;;
-      *) die "$usage" ;;
-    esac
-    shift
-  done
-  if [ -n "$since" ]; then
-    since_ms=$(date -d "$since" +%s 2>/dev/null) || die "not a date: $since"
-  else
-    since_ms=$(date -d "$(date +%F) -$((days - 1)) days" +%s)
-  fi
-  since_ms=$((since_ms * 1000))
-  need_server
-  work=$(mktemp -d)
-  # (Newest-updated first: a thread started since then was updated since.)
-  while :; do
-    page=$(server_get "/api/session?limit=100${cursor:+&cursor=$cursor}") || { rm -rf "$work"; die "couldn't list sessions"; }
-    jq -c '.data[]' <<<"$page" >>"$work/sessions"
-    [ "$(jq --argjson s "$since_ms" '.data | length > 0 and (map(.time.updated) | min) >= $s' <<<"$page")" = true ] || break
-    cursor=$(jq -r '.cursor.next // empty' <<<"$page")
-    [ -n "$cursor" ] || break
-  done
-  jq -r '.location.directory // empty' "$work/sessions" | sort -u | while IFS= read -r dir; do
-    printf '%s\t%s\n' "$dir" "$(project_of "$dir")"
-  done | jq -Rn '[inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries' >"$work/projects"
-  for dir in "$threads_dir"/*.json; do [ -f "$dir" ] && cat "$dir"; done | jq -cs . >"$work/stacks"
-  jq -s . "$work/sessions" >"$work/all"
-  jq -c -n --argjson since "$since_ms" --arg p "$project" \
-    --slurpfile s "$work/all" --slurpfile pr "$work/projects" --slurpfile t "$work/stacks" \
-    '{since: $since, sessions: $s[0], projects: $pr[0], stacks: $t[0]}' >"$work/in"
-  jq -c --arg p "$project" -f "$history_filter" "$work/in" \
-    | jq -c --arg p "$project" 'if $p == "" then . else .threads |= map(select(.project == $p)) end' >"$work/out"
-  if [ -n "$json" ]; then cat "$work/out"; rm -rf "$work"; return; fi
-  jq -r --arg A "$A" --arg D "$D" --arg G "$G" --arg Y "$Y" --arg N "$N" --arg p "$project" '
-    def secs: . / 1000 | floor;
-    def day: secs | strflocaltime("%a %-d %b");
-    def clock: secs | strflocaltime("%H:%M");
-    def money: if . == 0 then null else (. * 100 | round) as $c
-      | "$\($c / 100 | floor).\($c % 100 | tostring | if length < 2 then "0" + . else . end)" end;
-    def count: if . >= 1000000 then "\(. / 100000 | round / 10)M" elif . >= 1000 then "\(. / 1000 | round)k" else tostring end;
-    def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
-    def totals: [plural(length; "thread"),
-      (([.[].tokens] | add) as $t | if $t > 0 then "\($t | count) tokens" else empty end),
-      ([.[].cost] | add | money // empty)] | join(" · ");
-    def outcome: [(if .merged > 0 then plural(.merged; "layer") + " merged" else empty end),
-      (if .approved > 0 then "\(.approved) approved, on the forge" else empty end),
-      (if .closing == "discard" then "set aside" else empty end)] | join(", ") | select(. != "");
-    def span: (.created | clock) as $from | (.updated | clock) as $to
-      | if (.created | secs | strflocaltime("%F")) != (.updated | secs | strflocaltime("%F"))
-        then "\($from)–\(.updated | day) \($to)"
-        elif $from == $to then "\($from)      " else "\($from)–\($to)" end;
-    .threads as $all
-    | if $all == [] then "\($D)No threads since \(.since | day)\(if $p == "" then "" else " in \($p)" end).\($N)"
-      else
-        ($all | group_by(.created | secs | strflocaltime("%F")) | reverse[]
-         | sort_by(-.created)
-         | "\($A)\(.[0].created | day)\($N)  \($D)\(totals)\($N)",
-           (.[] | "  \(span)  \(.title // "(untitled)")\(if $p == "" and .project then "  \($A)\(.project)\($N)" else "" end)",
-             "               \($D)\([
-               (if .state == "at work" then "\($Y)at work\($D)" elif .state == "closed" then "closed" else "\($N)open\($D)" end),
-               (.stack | if . then outcome else empty end),
-               (if .subagents > 0 then plural(.subagents; "subagent") else empty end),
-               (if .tokens > 0 then "\(.tokens | count) tokens" else empty end),
-               (.cost | money // empty),
-               (.model // empty)] | join(" · "))\($N)"),
-           ""),
-        "\($D)Since \(.since | day): \($all | totals), \($all | map(select(.state == "closed")) | length) closed\($N)"
-      end' "$work/out"
-  rm -rf "$work"
-}
-
-# --- allow, deny, allowed -----------------------------------------------------
-
-# Permission requests (JSON lines in and out, as the server has them), with
-# where they'd run: the shell call's own workdir (not the agent's description
-# of it), against the session's folder ($1), or else that folder.
-with_cwd() {
-  local request session message call input
-  while IFS= read -r request; do
-    [ -n "$request" ] || continue
-    IFS=$'\t' read -r session message call < <(jq -r '[.sessionID, (.source.messageID // "-"), (.source.id // "-")] | @tsv' <<<"$request")
-    input=$(server_get "/api/session/$session/message/$message" | jq -c --arg call "$call" \
-      'first(.data.content[]? | select(.type == "tool" and .id == $call) | .state.input) // {}' 2>/dev/null) || input=""
-    [ -n "$input" ] || input='{}'
-    jq -c --argjson i "$input" --arg d "$1" \
-      '. + {cwd: ($i.workdir // null | if . == null then $d elif startswith("/") then . else $d + "/" + . end)}' <<<"$request"
-  done
-}
-
-# A request waiting on you (any running session's), by its id.
-pending_request() {
-  local session
-  for session in $(server_get "/api/session?limit=50" | jq -r '.data[] | select((.time.busy // 0) > (.time.idle // 0)) | .id'); do
-    server_get "/api/session/$session/permission" | jq -ce --arg r "$1" 'first(.data[] | select(.id == $r))' && return
-  done
-  return 1
-}
-
-# A request, in a line: what it'd do, and where.
-described() {
-  jq -r --arg home "$HOME" '"\(.action) \(.resources | join(", "))"
-    + (if .cwd then "  (in \(.cwd | if startswith($home) then "~" + .[($home | length):] else . end))" else "" end)'
-}
-
-# allow|deny: answers a request. (Safe to repeat: one that's not waiting is
-# already answered, so there's nothing to do.)
-answer() {
-  local verb=$1 decision=$2 id=${3:-} request session
-  [ -n "$id" ] || die "usage: smx ai $verb <request>"
-  if [ -z "$(server_url)" ] || ! server_get "/api/session?limit=1" >/dev/null; then die "OpenCode's server isn't reachable" 3; fi
-  if ! request=$(pending_request "$id"); then
-    echo "${D}Nothing to do: $id isn't waiting (answered already, or never asked).${N}"
-    return
-  fi
-  session=$(jq -r .sessionID <<<"$request")
-  server_curl -sf --max-time 10 -X POST -H 'Content-Type: application/json' \
-    -d "$(jq -cn --arg d "$decision" '{decision: $d}')" \
-    "$(server_url)/api/session/$session/permission/$id/reply" >/dev/null || die "couldn't answer $id"
-  request=$(with_cwd "$(server_get "/api/session/$session" | jq -r '.data.location.directory // ""')" <<<"$request")
-  case "$decision" in
-    once) echo "${G}✓${N} Allowed: $(described <<<"$request")" ;;
-    always) echo "${G}✓${N} Allowed, and from now on: $(jq -r '"\(.action) \((.save // .resources) | join(", "))"' <<<"$request")" ;;
-    reject) echo "${R}✗${N} Denied: $(described <<<"$request")" ;;
-  esac
-}
-
-allow() {
-  local id="" decision=once
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --always) decision=always ;;
-      -*) die "usage: smx ai allow <request> [--always]" ;;
-      *) id=$1 ;;
-    esac
-    shift
-  done
-  answer allow "$decision" "$id"
-}
-
-# allowed: what's allowed from now on (OpenCode's saved permissions: per
-# project, an action and a pattern), and revoking it.
-allowed() {
-  local saved projects project code
-  case "${1:-}" in
-    revoke)
-      [ -n "${2:-}" ] || die "usage: smx ai allowed revoke <id>"
-      # (The server takes a repeat without saying so.)
-      if allowed --json | jq -e --arg id "$2" '.allowed | any(.id == $id)' >/dev/null; then
-        code=$(server_curl -s --max-time 10 -o /dev/null -w '%{http_code}' -X DELETE "$(server_url)/api/permission/saved/$2") || die "OpenCode's server isn't reachable" 3
-      else
-        code=404
-      fi
-      case "$code" in
-        2??) echo "${G}✓${N} Revoked $2" ;;
-        404) echo "${D}Nothing to do: $2 isn't allowed (revoked already, or never was).${N}" ;;
-        *) die "couldn't revoke $2 (HTTP $code)" ;;
-      esac
-      return
-      ;;
-    "" | --json) ;;
-    *) die "usage: smx ai allowed [--json | revoke <id>]" ;;
-  esac
-  # (The server lists them per project.)
-  projects=$(server_get /api/project) || die "OpenCode's server isn't reachable" 3
-  saved=$(for project in $(jq -r '.[].id' <<<"$projects"); do server_get "/api/permission/saved?projectID=$project" | jq -c '.data[]'; done | jq -cs .)
-  saved=$(jq -c --argjson p "$projects" '($p | map({key: .id, value: .canonical}) | from_entries) as $where
-    | {v: 1, allowed: [.[] | {id, project: $where[.projectID], action, resource, created: .time.created}]}' <<<"$saved")
-  if [ "${1:-}" = --json ]; then
-    echo "$saved"
-  elif [ "$(jq '.allowed | length' <<<"$saved")" = 0 ]; then
-    echo "${D}Nothing's allowed from now on: agents ask (as their rules say).${N}"
-  else
-    jq -r --arg home "$HOME" '.allowed[] | [.action, .resource,
-        ((.project // "?") | if startswith($home) then "~" + .[($home | length):] else . end), .id] | @tsv' <<<"$saved" \
-      | while IFS=$'\t' read -r action resource project id; do
-          printf '%s %s  %s\n' "$action" "$resource" "${D}$project  $id${N}"
-        done
   fi
 }
 
@@ -2011,9 +1793,6 @@ case "${1:-}" in
   status) shift; status "$@" ;;
   open) shift; open_session "$@" ;;
   shell) shift; shell_command "$@" ;;
-  allow) shift; allow "$@" ;;
-  deny) shift; [ "$#" -le 1 ] || die "usage: smx ai deny <request>"; answer deny reject "${1:-}" ;;
-  allowed) shift; allowed "$@" ;;
   decide) shift; decide_command "$@" ;;
   reopen) shift; reopen_command "$@" ;;
   confirm) shift; confirm_command "$@" ;;
@@ -2026,11 +1805,8 @@ case "${1:-}" in
   pause) shift; pause_command "$@" ;;
   lead) shift; lead_command "$@" ;;
   new) shift; new_thread "$@" ;;
-  reply) shift; reply "$@" ;;
-  park) shift; park "$@" ;;
   close) shift; close_thread "$@" ;;
   context) shift; context "$@" ;;
-  history) shift; history_command "$@" ;;
   "" | help | -h | --help) usage ;;
   *) say "unknown command '$1'"; usage >&2; exit 1 ;;
 esac

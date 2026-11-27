@@ -33,8 +33,8 @@ let
     }];
   };
   # smx ai's normalizer, on recorded (and made-up) server events, its
-  # layers' hotspots, on made-up changes, its history, on made-up sessions,
-  # and its decision log's fold, on a made-up log.
+  # layers' hotspots, on made-up changes, and its decision log's fold, on a
+  # made-up log.
   ai = pkgs.runCommand "smx-ai-tests" { nativeBuildInputs = [ pkgs.jq pkgs.diffutils ]; } ''
     for events in ${../ai/tests}/*.events.jsonl; do
       expected=''${events%.events.jsonl}.expected.jsonl
@@ -44,10 +44,6 @@ let
     for change in ${../ai/tests}/*.hotspots.json; do
       echo "$(basename "$change")"
       jq -c -f ${../ai/hotspots.jq} "$change" | diff -u "''${change%.json}.expected.json" -
-    done
-    for sessions in ${../ai/tests}/*.history.json; do
-      echo "$(basename "$sessions")"
-      jq -c -f ${../ai/history.jq} "$sessions" | diff -u "''${sessions%.json}.expected.json" -
     done
     for log in ${../ai/tests}/*.fold.json; do
       echo "$(basename "$log")"
