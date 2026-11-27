@@ -5,9 +5,9 @@
 #
 #   - Tapped alone: opens $tap (a Noctalia panel).
 #   - Held alone for $peek_after ms: the bar peeks out, until it's released.
-#   - Still held at $overlay_after ms: its shortcuts, until it's released (a
-#     Noctalia panel, ../../noctalia/plugins/shortcuts, which has the bar's
-#     buttons show theirs too). (Not if a panel's open already.)
+#   - Still held at $overlay_after ms: its shortcuts (a Noctalia panel,
+#     ../../noctalia/plugins/shortcuts), until it's released. (Not if a
+#     panel's open already.)
 
 sheet=smudgenix/shortcuts:keys
 

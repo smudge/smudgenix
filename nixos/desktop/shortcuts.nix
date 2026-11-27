@@ -1,14 +1,12 @@
 # The shortcuts sheet that holding Super shows (../../noctalia/plugins/
 # shortcuts), from the binds (./binds.nix): just Super's, in sections, written
 # without "Super+" (it's held already), and with families like Super+1…9 on
-# one line. Spawns show only with a hotkey-overlay-title, and binds that open
-# something on the bar (`onBar`, panels' ids) only there, on its buttons. Keys
-# that do the same thing share a line.
-#
-# Gives { sheet; keysFor }: keysFor.<panel> is what opens it, like "Space".
+# one line. Spawns show only with a hotkey-overlay-title. Keys that do the
+# same thing share a line, and those that open something on the bar (`glyphs`,
+# its icon by panel, and page: "control-center audio") have its icon.
 { lib }:
 
-{ binds, onBar ? [ ] }:
+{ binds, glyphs ? { } }:
 
 let
   actionOf = v: if lib.isString v then v else v.action;
@@ -40,18 +38,19 @@ let
   in if m == null then null
     else lib.elemAt m 1 + lib.optionalString (lib.elemAt m 3 != null) " ${lib.elemAt m 3}";
 
-  # One entry per bind: { section, keys, title, panel, onBar } (or null, to
-  # leave it out).
+  # One entry per bind: { section, keys, title, glyph } (or null, to leave it
+  # out).
   entry = key: value: let
     keys = keysOf key;
     last = lib.last keys;
     action = actionOf value;
     title = titleOf value;
     panel = panelOf action;
+    glyph = if panel != null then glyphs.${panel} or null else null;
     name = lib.head (lib.splitString " " action);
     hasWord = w: lib.hasInfix w name;
     section =
-      if panel != null && (lib.hasPrefix "control-center " panel || panel == "session") then "The bar"
+      if glyph != null then "The bar"
       else if title != null && lib.hasPrefix "spawn" action then "Open"
       else if hasWord "workspace" then "Workspaces"
       else if hasWord "monitor" then "Monitors"
@@ -75,7 +74,7 @@ let
       || lib.elem p [ "Left" "Right" "Up" "Down" "Page_Up" "Page_Down" "Print" ]) keys
       || (lib.hasPrefix "spawn" action && title == null)
     then null
-    else { inherit section panel; onBar = lib.elem panel onBar; } // (if family != null then family else {
+    else { inherit section glyph; } // (if family != null then family else {
       inherit keys;
       title = if title != null then title else humanize action;
     });
@@ -99,13 +98,11 @@ let
     (builtins.split "([0-9]+)" s);
 in
 {
-  keysFor = lib.listToAttrs (map (e: lib.nameValuePair e.panel (joined e))
-    (lib.filter (e: e.panel != null) lines));
-
   sheet = lib.filter (s: s.binds != [ ]) (map (section: {
     title = section;
-    binds = map (e: { keys = joined e; inherit (e) title; })
+    binds = map (e: { keys = joined e; inherit (e) title; }
+      // lib.optionalAttrs (e.glyph != null) { inherit (e) glyph; })
       (lib.sort (a: b: natural (joined a) < natural (joined b))
-        (lib.filter (e: e.section == section && !e.onBar) lines));
+        (lib.filter (e: e.section == section) lines));
   }) [ "Open" "The bar" "Move around" "Windows" "Size" "Workspaces" "Monitors" "Session" ]);
 }

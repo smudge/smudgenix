@@ -2,7 +2,7 @@
 -- Super's shortcuts: while you hold it (opened and closed by the leader key,
 -- nixos/desktop/leader.sh), or from a key. From the sheet smudgenix writes
 -- from its binds (nixos/desktop/shortcuts.nix); keys are shown without
--- "Super+". While it's open, the bar's buttons show theirs too.
+-- "Super+". Those that open something on the bar show its icon.
 
 local sheetPath = "/etc/smudgenix/shortcuts.json"
 local columns = 3
@@ -18,10 +18,12 @@ local function section(s)
     ui.label({ text = s.title, fontSize = 11, fontWeight = "bold", color = "on_surface/0.6" }),
   }
   for _, bind in s.binds do
-    table.insert(rows, ui.row({ gap = 10, align = "center" }, {
-      ui.row({ width = 118, justify = "end" }, { chip(bind.keys) }),
-      ui.label({ text = bind.title, fontSize = 12, color = "on_surface", maxLines = 1, flexGrow = 1 }),
-    }))
+    local row = { ui.row({ width = 118, justify = "end" }, { chip(bind.keys) }) }
+    if bind.glyph then
+      table.insert(row, ui.glyph({ name = bind.glyph, size = 14, color = "on_surface/0.8" }))
+    end
+    table.insert(row, ui.label({ text = bind.title, fontSize = 12, color = "on_surface", maxLines = 1, flexGrow = 1 }))
+    table.insert(rows, ui.row({ gap = 10, align = "center" }, row))
   end
   return ui.column({ gap = 5 }, rows)
 end
@@ -30,15 +32,6 @@ local function load()
   local raw = noctalia.readFile(sheetPath)
   local sheet = raw and noctalia.json.decode(raw) or nil
   return type(sheet) == "table" and sheet or nil
-end
-
--- Tells the bar's buttons (sheet.hinted, plugin widgets) to show their keys.
-local function hints(state)
-  local sheet = load()
-  if not sheet then return end
-  for _, widget in sheet.hinted do
-    noctalia.runAsync({ sheet.noctalia, "msg", "plugin", widget, "all", "hints", state })
-  end
 end
 
 function render()
@@ -73,9 +66,4 @@ end
 
 function onOpen()
   render()
-  hints("on")
-end
-
-function onClose()
-  hints("off")
 end

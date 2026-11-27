@@ -16,19 +16,24 @@ let
   # (Agents on the bar, with the AI module: see ../ai.nix.)
   agents = config.smudgenix.ai.enable;
 
-  # With the leader key (./leader.nix), the bar's launcher, clipboard and
-  # Control Center are smudgenix's buttons, which show their shortcuts while
-  # Super's are shown (Noctalia's own can't). Each opens its panel, as
-  # Noctalia's do, under the same name, so bar lists saved from Noctalia's
-  # settings get them too. (Worth revisiting, as a key hint on any widget,
-  # upstream.)
-  inherit (import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; }) keysFor;
-  buttons = lib.optionalAttrs desktop.leader.enable {
-    launcher = { glyph = "search"; panel = "launcher"; };
-    clipboard = { glyph = "clipboard"; panel = "clipboard"; };
-    control-center = { glyph = "noctalia"; panel = "control-center"; context = " home"; };
+  # The bar's pills' icons, by what they open, for the shortcuts sheet
+  # (./leader.nix): a bind that opens one shows it. (A key hint on the pills
+  # themselves, upstream, may be worth it someday.)
+  glyphs = {
+    launcher = "search";
+    clipboard = "clipboard";
+    control-center = "noctalia";
+    "smudgenix/agents:sessions" = "robot";
+    "control-center audio" = "volume";
+    "control-center media" = "music";
+    "control-center monitor" = "brightness-high";
+    "control-center power" = "battery-4";
+    "control-center network" = "wifi";
+    "control-center bluetooth" = "bluetooth";
+    "control-center calendar" = "clock";
+    "control-center notifications" = "bell";
+    session = "power";
   };
-  agentsPanel = "smudgenix/agents:sessions";
 
   # Super and the F-row opens the bar's other pills' pages, by the icon on the
   # key where there is one (and with Shift, a neighbour's). Each as the F key
@@ -196,15 +201,8 @@ let
       network.show_label = false;
       volume.show_label = false;
     } // lib.optionalAttrs agents {
-      agents = { type = "smudgenix/agents:agents"; } // lib.optionalAttrs desktop.leader.enable {
-        keys = keysFor.${agentsPanel} or "";
-      };
-    } // lib.mapAttrs (_: b: {
-      type = "smudgenix/shortcuts:button";
-      inherit (b) glyph;
-      keys = keysFor.${b.panel} or "";
-      actions.left = "panel-toggle ${b.panel}${b.context or ""}";
-    }) buttons;
+      agents.type = "smudgenix/agents:agents";
+    };
   };
 
   # The login screen, in the same look. (All set here, so nothing syncs it
@@ -276,10 +274,7 @@ in
 
     smudgenix.desktop.noctalia.settings = lib.mapAttrsRecursive (_: lib.mkDefault) defaults;
 
-    smudgenix.desktop.leader = {
-      onBar = lib.mapAttrsToList (_: b: b.panel) buttons ++ lib.optional agents agentsPanel;
-      hinted = [ "smudgenix/shortcuts:button" ] ++ lib.optional agents "smudgenix/agents:agents";
-    };
+    smudgenix.desktop.leader.glyphs = glyphs;
 
     programs.noctalia = {
       enable = true;

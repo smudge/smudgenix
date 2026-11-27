@@ -14,7 +14,7 @@ let
   inherit (config.smudgenix) desktop;
   cfg = desktop.leader;
   socket = "/run/smudgenix-leader.sock";
-  shortcuts = import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; inherit (cfg) onBar; };
+  shortcuts = import ./shortcuts.nix { inherit lib; } { inherit (desktop) binds; inherit (cfg) glyphs; };
 
   leader = pkgs.writeShellApplication {
     name = "smudgenix-leader";
@@ -50,22 +50,13 @@ in
         it's released). Released sooner, it's a tap.
       '';
     };
-    onBar = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
+    glyphs = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
       internal = true;
       description = ''
-        Panels the bar has a button for (from ./noctalia.nix), whose
-        shortcuts show there, not on the sheet.
-      '';
-    };
-    hinted = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      internal = true;
-      description = ''
-        Noctalia plugin widgets (as `author/plugin:entry`) that show their
-        shortcut while the shortcuts sheet is open, on a "hints" event.
+        The bar's icons (from ./noctalia.nix) by the panel they open, and its
+        page, like "control-center audio": binds that open one show it.
       '';
     };
     overlayAfter = lib.mkOption {
@@ -136,11 +127,8 @@ in
     };
 
     # The shortcuts sheet, for ../../noctalia/plugins/shortcuts.
-    environment.etc."smudgenix/shortcuts.json".text = builtins.toJSON {
-      sections = shortcuts.sheet;
-      inherit (cfg) hinted;
-      noctalia = lib.getExe config.programs.noctalia.package;
-    };
+    environment.etc."smudgenix/shortcuts.json".text =
+      builtins.toJSON { sections = shortcuts.sheet; };
 
     # Super+Shift+/ shows them too, in place of niri's list. (Over the default
     # binds, ../binds.nix, under a host's own.)

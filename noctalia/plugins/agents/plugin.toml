@@ -1,6 +1,6 @@
 id          = "smudgenix/agents"
 name        = "Agents"
-version     = "0.20.1"
+version     = "0.20.2"
 plugin_api  = 56
 author      = "smudgenix"
 icon        = "robot"
@@ -20,13 +20,6 @@ entry = "service.luau"
 [[widget]]
 id    = "agents"
 entry = "widget.luau"
-
-  [[widget.setting]]
-  key             = "keys"
-  type            = "string"
-  label_key       = "settings.keys.label"
-  description_key = "settings.keys.description"
-  default         = ""
 
 [[panel]]
 id               = "sessions"
